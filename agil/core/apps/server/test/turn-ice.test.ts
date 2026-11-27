@@ -3,7 +3,7 @@ import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { createSocket } from 'node:dgram';
-import { createServer, type Server } from 'node:net';
+import { createServer, type Server, type Socket } from 'node:net';
 import { openWs, startTestServer, type TestServer } from './helpers.js';
 
 const ADMIN = { 'x-api-key': 'dev-key' };
@@ -107,8 +107,12 @@ async function startUdpStun(): Promise<{ port: number; close: () => Promise<void
 }
 
 async function startTcpTurn(): Promise<{ port: number; server: Server; close: () => Promise<void> }> {
+  const connections = new Set<Socket>();
   const server = createServer((connection) => {
+    connections.add(connection);
+    connection.once('close', () => connections.delete(connection));
     connection.on('error', () => {});
+    connection.resume();
     connection.end(stunResponse(Buffer.alloc(20)));
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
@@ -116,7 +120,10 @@ async function startTcpTurn(): Promise<{ port: number; server: Server; close: ()
   return {
     port,
     server,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    close: () => new Promise<void>((resolve) => {
+      server.close(() => resolve());
+      for (const connection of connections) connection.destroy();
+    }),
   };
 }
 
