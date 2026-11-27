@@ -1,5 +1,7 @@
 # Интеграционная проверка Edge
 
+Русский · [English](README.en.md)
+
 [Исходный код и запуск на встраиваемых системах](https://github.com/GillHD/agilframe-edge)
 
 В Core находится сквозной сценарий с временными Redis, LiveKit, Ingress и
