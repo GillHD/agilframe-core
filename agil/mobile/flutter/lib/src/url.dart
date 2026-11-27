@@ -248,7 +248,7 @@ AgilCallLink? parseAgilCallLink(
 
   String kind;
   String expectedServer;
-  String? serverParam = _firstParam(params, <String>['server', 'serverUrl']);
+  final String? serverParam = _firstParam(params, <String>['server', 'serverUrl']);
 
   if (isHttp) {
     if (!parsed.path.toLowerCase().endsWith(widgetHtmlPath)) return null;

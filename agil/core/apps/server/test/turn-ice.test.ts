@@ -109,7 +109,7 @@ async function startUdpStun(): Promise<{ port: number; close: () => Promise<void
 async function startTcpTurn(): Promise<{ port: number; server: Server; close: () => Promise<void> }> {
   const server = createServer((connection) => {
     connection.on('error', () => {});
-    connection.write(stunResponse(Buffer.alloc(20)));
+    connection.end(stunResponse(Buffer.alloc(20)));
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
   const port = (server.address() as { port: number }).port;

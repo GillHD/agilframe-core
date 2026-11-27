@@ -186,7 +186,7 @@ void main() {
     });
 
     test('rejects a server parameter that points to another origin', () {
-      final String evil =
+      const String evil =
           'https://calls.corp/embed.html?server=https%3A%2F%2Fevil.example&room=r&token=secret';
       expect(parseAgilCallLink(evil), isNull);
     });

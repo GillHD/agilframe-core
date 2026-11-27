@@ -1,0 +1,84 @@
+name: Dependency audit
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    paths: ['package.json', 'package-lock.json', 'agil/**/package.json', '.github/workflows/dependency-audit.yml']
+  schedule:
+    - cron: '23 5 * * 2'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-audit-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      affected: ${{ steps.audit.outputs.affected }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Check production npm dependencies
+        id: audit
+        run: |
+          status=0
+          npm audit --package-lock-only --ignore-scripts --omit=dev --audit-level=high --json > audit.json || status=$?
+          affected="$(jq -er '
+            .metadata.vulnerabilities
+            | select((.high | type) == "number" and (.critical | type) == "number")
+            | .high + .critical
+          ' audit.json)"
+          if [[ ! "$affected" =~ ^[0-9]+$ || "$status" -gt 1 || ( "$status" -ne 0 && "$affected" -eq 0 ) ]]; then
+            echo "::error::npm audit could not provide a valid vulnerability report"
+            exit 1
+          fi
+          echo "affected=$affected" >> "$GITHUB_OUTPUT"
+          printf 'Production npm dependencies with high or critical advisories: %s\n' "$affected" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$GITHUB_EVENT_NAME" == pull_request && "$affected" -gt 0 ]]; then
+            echo "::error::Resolve high or critical npm advisories before merging"
+            exit 1
+          fi
+
+  track:
+    if: github.repository == 'GillHD/agilframe-core' && github.ref_name == github.event.repository.default_branch && github.event_name != 'pull_request'
+    needs: audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      AFFECTED: ${{ needs.audit.outputs.affected }}
+    steps:
+      - name: Keep one issue for published npm advisories
+        run: |
+          title='Security audit: high or critical npm advisories'
+          issue="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues?state=open&per_page=100" |
+            jq -sr --arg title "$title" '[.[][] | select(has("pull_request") | not) | select(.title == $title and .user.login == "github-actions[bot]") | .number] | .[0] // empty')"
+          if [[ "$AFFECTED" -eq 0 ]]; then
+            if [[ -n "$issue" ]]; then
+              gh issue close "$issue" --repo "$GITHUB_REPOSITORY" --reason completed
+            fi
+            exit 0
+          fi
+
+          body="$(mktemp)"
+          printf 'Production npm dependencies with published high or critical advisories: **%s**.\n\nReview Dependabot and apply the appropriate updates.\n\n[Latest audit run](%s/%s/actions/runs/%s)\n' \
+            "$AFFECTED" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > "$body"
+          if [[ -n "$issue" ]]; then
+            gh issue edit "$issue" --repo "$GITHUB_REPOSITORY" --body-file "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$body"
+          fi
