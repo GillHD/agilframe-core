@@ -1,0 +1,66 @@
+{
+  "name": "agilframe",
+  "version": "0.1.0",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AgilFrame — встраиваемая WebRTC-платформа видеозвонков: API, темы, чат, блюр фона, MCP",
+  "workspaces": [
+    "agil/core/apps/*",
+    "agil/core/packages/*",
+    "agil/websdk/*",
+    "agil/mobile/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build:protocol && npm run build:security && npm run build:ai && npm run build:server && npm run build:widget && npm run build:sdk && npm run build:embed && npm run build:mobile && npm run build:capacitor && npm run build:mcp && npm run build:demo && npm run build:editor && npm run build:dashboard",
+    "build:protocol": "npm run build -w @agil/protocol",
+    "build:security": "npm run build -w @agil/security",
+    "build:ai": "npm run build -w @agil/ai",
+    "build:server": "npm run build -w @agil/calls-server",
+    "build:widget": "npm run build -w @agil/calls-widget",
+    "build:sdk": "npm run build -w @agil/calls-sdk",
+    "build:embed": "npm run build -w @agil/calls-embed",
+    "build:mobile": "npm run build -w @agil/calls-react-native",
+    "build:capacitor": "npm run build -w @agil/calls-capacitor",
+    "test:capacitor": "npm run test -w @agil/calls-capacitor",
+    "build:mcp": "npm run build -w @agil/mcp",
+    "build:demo": "npm run build -w @agil/demo",
+    "build:editor": "npm run build -w @agil/editor",
+    "build:dashboard": "npm run build -w @agil/dashboard",
+    "test": "npm run test -w @agil/protocol && npm run test -w @agil/security && npm run test -w @agil/ai && npm run test -w @agil/calls-server && npm run test -w @agil/dashboard && npm run test -w @agil/editor && npm run test -w @agil/calls-widget && npm run test -w @agil/mcp && npm run test -w @agil/calls-react-native && npm run test -w @agil/calls-embed && npm run test -w @agil/calls-capacitor && npm run test:node-image",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "dev": "node agil/core/scripts/dev.mjs",
+    "start": "npm run start -w @agil/calls-server",
+    "mcp": "npm run start -w @agil/mcp",
+    "e2e": "node agil/core/scripts/e2e.mjs",
+    "qa:load:media": "node agil/core/qa/load/browser-media-load.mjs",
+    "qa:load:media:dry": "node agil/core/qa/load/browser-media-load.mjs --dry-run --users=200 --browsers=4",
+    "seed": "node agil/core/scripts/seed.mjs",
+    "agil": "node agil/core/scripts/agil-cli.mjs",
+    "test:egress": "tsx --test agil/core/apps/server/test/egress.test.ts agil/core/apps/server/test/egress-playback.test.ts",
+    "test:egress-deploy": "node --test agil/core/scripts/test/egress-deploy.test.mjs",
+    "test:egress-health": "node --test agil/core/scripts/test/egress-health.test.mjs",
+    "test:load-media": "node --test agil/core/qa/load/test/browser-media-load.test.mjs",
+    "test:node-agent": "node --test \"agil/infra/node-agent/test/*.test.mjs\"",
+    "test:node-cli": "node --test agil/core/scripts/test/node-metrics.test.mjs agil/core/scripts/test/agil-cli-heartbeat.test.mjs",
+    "test:sip-lab": "node --test agil/core/scripts/test/sip-local-lab.test.mjs",
+    "test:node-image": "node --test \"agil/core/nodes/all-in-one/test/*.test.mjs\""
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "ws": "^8.18.3",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@agil/calls-embed": "0.1.0",
+    "@types/node": "^22.15.0",
+    "@types/ws": "^8.18.0",
+    "puppeteer-core": "^25.17.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.6"
+  }
+}

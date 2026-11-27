@@ -1,0 +1,23 @@
+# Second LiveKit node in the same Redis cluster.
+# Used for multi-node routing/HA validation. A room is still hosted by one
+# node; signaling connections may arrive at either node and are bridged.
+port: 7890
+
+rtc:
+  tcp_port: 7891
+  port_range_start: 50200
+  port_range_end: 50300
+  use_external_ip: true
+
+redis:
+  address: redis:6379
+
+prometheus:
+  port: 6790
+
+logging:
+  level: info
+
+room:
+  empty_timeout: 300
+  departure_timeout: 20

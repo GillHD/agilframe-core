@@ -1,0 +1,78 @@
+# AgilFrame — Caddy v2 sample.
+#
+# TEMPLATE only. Caddy obtains and renews certificates automatically; make sure
+# ports 80/443 reach this host and the DNS A/AAAA record already points at it.
+# Copy into your Caddyfile, replace the hostname + email, then:
+#   caddy validate --config Caddyfile && systemctl reload caddy
+#
+# Caddy proxies WebSockets without extra directives; the long read/write
+# timeouts below keep idle call sockets alive.
+
+{
+	email admin@example.com
+	# Uncomment for staging/testing to avoid Let's Encrypt rate limits:
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+calls.example.com {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "SAMEORIGIN"
+		-Server
+	}
+
+	# Keep >= AGIL_MAX_UPLOAD_MB (25 MiB).
+	# `request_body` requires Caddy 2.10+; on older versions enforce the limit
+	# at the app/WAF or use a reverse_proxy upstream that bounds the body.
+	request_body {
+		max_size 30MB
+	}
+
+	reverse_proxy 127.0.0.1:8787 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up Host {host}
+		# Preserve the WebSocket subprotocol (join token can live there).
+		header_up Sec-WebSocket-Protocol {header.Sec-WebSocket-Protocol}
+
+		# Idle calls must not be cut after Caddy's default timeout.
+		transport http {
+			read_timeout 1h
+			write_timeout 1h
+			dial_timeout 10s
+		}
+	}
+
+	# Optional: restrict docs/OpenAPI to your office network.
+	# @docs path /docs* /openapi.json /openapi.admin.json
+	# handle @docs {
+	# 	@internal remote_ip 10.0.0.0/8 192.168.0.0/16
+	# 	handle @internal {
+	# 		reverse_proxy 127.0.0.1:8787
+	# 	}
+	# 	respond "Not found" 404
+	# }
+
+	log {
+		output stdout
+		format json
+	}
+}
+
+# --- optional: LiveKit SFU on the same Caddy -------------------------------
+# sfu.example.com {
+# 	reverse_proxy 127.0.0.1:7880 {
+# 		lb_policy round_robin
+# 		header_up X-Real-IP {remote_host}
+# 		header_up X-Forwarded-Proto {scheme}
+# 		transport http {
+# 			read_timeout 1h
+# 			write_timeout 1h
+# 		}
+# 	}
+# }

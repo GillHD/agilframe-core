@@ -1,0 +1,34 @@
+# LiveKit SFU — local SIP lab profile (host networking).
+#
+# Keys are NOT stored here: livekit-server reads them from LIVEKIT_KEYS
+# (injected by docker-compose.yml from .env).
+#
+# Ports must stay in sync with docker-compose.yml:
+#   7880/tcp          HTTP + WS signaling + Twirp API
+#   7881/tcp          RTC/TCP fallback
+#   50100-50200/udp   RTC media (kept out of the SIP RTP range 10000-10100)
+
+port: 7880
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50100
+  port_range_end: 50200
+  # No STUN in the lab: everything is on the same host/WSL2 network.
+  use_external_ip: false
+
+redis:
+  address: 127.0.0.1:6385
+
+# Internal-only Prometheus metrics (not needed by the lab, harmless).
+prometheus:
+  port: 6789
+
+logging:
+  level: info
+
+room:
+  # SIP lab rooms are short-lived; keep an empty lab room around just long
+  # enough to inspect it, then let LiveKit reap it.
+  empty_timeout: 120
+  departure_timeout: 10

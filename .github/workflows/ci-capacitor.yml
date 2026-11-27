@@ -1,0 +1,141 @@
+# CI: Capacitor plugin (@agil/calls-capacitor).
+#
+# TypeScript typecheck / unit tests / build, followed by static checks of the
+# native halves: podspec Ruby syntax, Gradle fragment invariants, Swift/Kotlin
+# sources and the published file list.
+#
+# The native iOS/Android plugin is NOT compiled here (that needs macOS/Xcode and
+# a host Capacitor app). Those compile gates are listed in
+# agil/core/docs/ci.md.
+# No deployment / no npm publish.
+name: CI / Capacitor
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-capacitor-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '23'
+  CI: 'true'
+  NPM_CONFIG_AUDIT: 'false'
+  NPM_CONFIG_FUND: 'false'
+
+jobs:
+  capacitor:
+    name: Capacitor plugin
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck -w @agil/calls-capacitor
+
+      - name: Unit tests
+        run: npm test -w @agil/calls-capacitor
+
+      - name: Build
+        run: npm run build -w @agil/calls-capacitor
+
+      - name: Native plugin static checks
+        working-directory: agil/mobile/capacitor
+        run: |
+          set -euo pipefail
+          test -f AgilCalls.podspec
+          test -f android/build.gradle
+          test -f ios/Sources/AgilCallsPlugin/AgilCallsPlugin.swift
+          test -f ios/Sources/AgilCallsPlugin/AgilCallViewController.swift
+          test -f android/src/main/java/com/agil/calls/AgilCallsPlugin.kt
+
+          # Podspec is Ruby DSL: parse it without CocoaPods/macOS.
+          ruby -c AgilCalls.podspec
+
+          # Native build-fragment invariants used by the host Capacitor app.
+          grep -q 'namespace "com.agil.calls"' android/build.gradle
+          grep -q 'minSdk' android/build.gradle
+          grep -q "s.ios.deployment_target = '14.0'" AgilCalls.podspec
+          grep -q "s.swift_version = '5.1'" AgilCalls.podspec
+
+          # Scripts shipped in the package must at least parse.
+          node --check scripts/clean.mjs
+          node --check scripts/postbuild.mjs
+
+          # Every built export target must exist after `npm run build`.
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const pkg = require('./package.json');
+          const targets = [];
+          for (const [key, value] of Object.entries(pkg.exports ?? {})) {
+            if (typeof value === 'string') {
+              targets.push([key, value]);
+            } else if (value && typeof value === 'object') {
+              for (const [condition, target] of Object.entries(value)) {
+                if (typeof target === 'string') targets.push([`${key}#${condition}`, target]);
+              }
+            }
+          }
+          const missing = targets.filter(([, target]) =>
+            target.startsWith('./') &&
+            (target.endsWith('.js') || target.endsWith('.d.ts')) &&
+            !fs.existsSync(path.resolve(target)),
+          );
+          if (missing.length > 0) {
+            console.error('Missing export targets:', missing);
+            process.exit(1);
+          }
+          console.log(`Export targets OK (${targets.length} checked)`);
+          NODE
+
+          # The npm tarball must actually ship the native sources and dist.
+          npm pack --dry-run --json > pack.json
+          node - <<'NODE'
+          const pack = require('./pack.json')[0];
+          const shipped = new Set(pack.files.map((file) => file.path));
+          const required = [
+            'AgilCalls.podspec',
+            'android/build.gradle',
+            'ios/Sources/AgilCallsPlugin/AgilCallsPlugin.swift',
+            'dist/index.js',
+            'dist/cjs/index.js',
+            'dist/index.d.ts',
+          ];
+          const missing = required.filter((file) => !shipped.has(file));
+          if (missing.length > 0) {
+            console.error('Missing from npm tarball:', missing);
+            process.exit(1);
+          }
+          console.log(`npm tarball OK (${shipped.size} files)`);
+          NODE
+
+      - name: Upload package artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: capacitor-results-${{ github.sha }}
+          path: |
+            agil/mobile/capacitor/dist/
+            agil/mobile/capacitor/pack.json
+          if-no-files-found: warn
+          retention-days: 7

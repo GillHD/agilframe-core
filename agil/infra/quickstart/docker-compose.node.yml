@@ -1,0 +1,140 @@
+# AgilFrame — node + TURN bundle (included by docker-compose.yml).
+#
+# This bundle runs on a media/TURN host:
+#   * node  — enrollment + heartbeat loop (same image, first-party CLI);
+#   * turn  — coturn STUN/TURN for WebRTC through NAT.
+#
+# In the all-in-one project it waits for the local core. On a host that talks to
+# a REMOTE core (AWS node VM etc.) add the override that removes that dependency
+# and requires AGIL_CORE_URL:
+#
+#   cp node.env.example .env        # TURN + node values only, no core secrets
+#   docker compose -f docker-compose.node.yml -f docker-compose.node-remote.yml up -d
+#
+# Relay ports are published 1:1 (host == container == coturn --min-port/--max-port).
+# Do not map host 50000-50050 to container 49200-49250: coturn allocates inside
+# the container on the configured range, so a shifted mapping makes ICE connect
+# (STUN/TURN on 3478 still works) while media never flows.
+#
+# Requires Docker Compose >= 2.24.
+
+name: agil-quickstart
+
+x-logging: &agil-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-hardening: &agil-hardening
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  node:
+    # Same image as core: enrollment/heartbeat uses the first-party CLI
+    # (agil/core/scripts/agil-cli.mjs), so no extra node image is required.
+    image: ${AGIL_CORE_IMAGE:-agil-calls:0.1.0}
+    # Bounded retries: a node without a token/key logs a clear error and stops
+    # after 5 attempts instead of restarting forever. `install.sh --start`
+    # mints the token first, so the normal path never hits this.
+    restart: "on-failure:5"
+    init: true
+    command: ["/bin/sh", "/opt/agil/node-loop.sh"]
+    depends_on:
+      core:
+        condition: service_healthy
+    environment:
+      # Overridable so a remote node can reach the core VM/DNS/EIP. The
+      # node-only override requires it explicitly (no silent local default).
+      AGIL_CORE_URL: ${AGIL_CORE_URL:-http://core:8787}
+      # One-time enrollment token minted by install.sh / the dashboard.
+      # After the first successful register the node key is persisted in
+      # node-state, so the token can be cleared and revoked.
+      AGIL_NODE_TOKEN: ${AGIL_NODE_TOKEN:-}
+      AGIL_NODE_KEY: ${AGIL_NODE_KEY:-}
+      AGIL_NODE_STATE_DIR: /app/.data
+      AGIL_CLI_PATH: agil/core/scripts/agil-cli.mjs
+      AGIL_NODE_ID: ${AGIL_NODE_ID:-agil-node-1}
+      AGIL_NODE_NAME: ${AGIL_NODE_NAME:-agil-node-1}
+      AGIL_NODE_ROLE: ${AGIL_NODE_ROLE:-sfu}
+      AGIL_NODE_FEATURES: ${AGIL_NODE_FEATURES:-sfu}
+      AGIL_NODE_REGION: ${AGIL_NODE_REGION:-}
+      AGIL_NODE_ENDPOINT: ${AGIL_NODE_ENDPOINT:-}
+      AGIL_NODE_CAPACITY: ${AGIL_NODE_CAPACITY:-}
+      AGIL_NODE_HEARTBEAT_SEC: ${AGIL_NODE_HEARTBEAT_SEC:-30}
+    volumes:
+      - node-state:/app/.data
+      - ../node/node-loop.sh:/opt/agil/node-loop.sh:ro
+      - ../node/node-healthcheck.sh:/opt/agil/node-healthcheck.sh:ro
+    <<: *agil-hardening
+    cap_drop:
+      - ALL
+    logging: *agil-logging
+    healthcheck:
+      # Reads heartbeat-at, which node-loop.sh writes only AFTER an accepted
+      # heartbeat (a node with an unreachable core stays unhealthy).
+      test: ["CMD", "/bin/sh", "/opt/agil/node-healthcheck.sh"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  turn:
+    image: coturn/coturn:4.6
+    restart: unless-stopped
+    # WebRTC relays are latency-sensitive; host networking is the production
+    # default on Linux. The bridge variant below is portable (Docker Desktop,
+    # cloud VMs) and needs TURN_EXTERNAL_IP so clients receive a routable
+    # candidate. See README.md §WebRTC ports.
+    ports:
+      # host:container are the SAME variable: coturn listens on TURN_PORT
+      # inside the container, so a shifted mapping would break TURN.
+      - "${TURN_BIND_ADDR:-0.0.0.0}:${TURN_PORT:-3478}:${TURN_PORT:-3478}/udp"
+      - "${TURN_BIND_ADDR:-0.0.0.0}:${TURN_PORT:-3478}:${TURN_PORT:-3478}/tcp"
+      # Relay range: host range == container range == coturn range (identity
+      # mapping). Open exactly this range on the cloud firewall and, for the
+      # DOCKER-USER chain, on the host.
+      - "${TURN_BIND_ADDR:-0.0.0.0}:${TURN_MIN_PORT:-49200}-${TURN_MAX_PORT:-49250}:${TURN_MIN_PORT:-49200}-${TURN_MAX_PORT:-49250}/udp"
+    command:
+      - "-n"
+      - "--log-file=stdout"
+      - "--lt-cred-mech"
+      - "--fingerprint"
+      - "--no-cli"
+      - "--no-tls"
+      - "--no-dtls"
+      - "--no-multicast-peers"
+      - "--realm=${TURN_REALM:-agil.local}"
+      # One static shared credential for every client (demo only). Anyone who
+      # can open the demo can relay traffic: the quotas below bound that, and
+      # production should switch to coturn's TURN REST API (--use-auth-secret)
+      # with short-lived credentials.
+      - "--user=${TURN_USER:-agil}:${TURN_PASSWORD:?set TURN_PASSWORD in .env — run ./install.sh}"
+      - "--total-quota=${TURN_TOTAL_QUOTA:-100}"
+      - "--user-quota=${TURN_USER_QUOTA:-0}"
+      - "--listening-port=${TURN_PORT:-3478}"
+      - "--min-port=${TURN_MIN_PORT:-49200}"
+      - "--max-port=${TURN_MAX_PORT:-49250}"
+      # Public IP clients should receive in relay candidates. 127.0.0.1 is only
+      # valid for calls on this host; install.sh validates that this is a
+      # publicly routable IPv4 (or an explicit --allow-private-ip dev choice).
+      - "--external-ip=${TURN_EXTERNAL_IP:-127.0.0.1}"
+    volumes:
+      - turn-logs:/var/log
+    <<: *agil-hardening
+    cap_drop:
+      - ALL
+    logging: *agil-logging
+    healthcheck:
+      # coturn has no HTTP endpoint; a TCP connect to the TURN listener is the
+      # cheapest liveness signal. The image is Debian-based and ships bash.
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/127.0.0.1/${TURN_PORT:-3478}'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  node-state:
+  turn-logs:

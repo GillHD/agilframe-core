@@ -1,0 +1,276 @@
+# AgilFrame — Prometheus alerting rules (optional, not deployed by the repo).
+#
+# Thresholds are documented in docs/operations.md §4.3 and are starting points:
+# tune them after two weeks of baseline. Every alert carries a `runbook` label
+# pointing at docs/operations.md.
+#
+# Metric caveats:
+#   - The app has no /metrics endpoint; app availability comes from blackbox
+#     probes (probe_success / probe_duration_seconds / TLS metrics).
+#   - LiveKit metric names used here are the upstream ones (livekit_room_total,
+#     livekit_participant_total, livekit_nack_total, livekit_packet_total).
+#     Verify with: curl -s http://127.0.0.1:6789/metrics | grep '^livekit_'
+#   - node_* requires node_exporter; container_* requires cAdvisor; redis_*
+#     requires redis_exporter. Rules whose series do not exist stay inactive.
+
+groups:
+  - name: agil-node-agent
+    rules:
+      - alert: AgilNodeAgentUnreachable
+        expr: up{job="agil-node-agent"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          runbook: docs/node-image.md#monitor-the-node
+        annotations:
+          summary: "Prometheus cannot scrape the AGIL node agent"
+          description: "Check the agent process, private network and scrape target."
+
+      - alert: AgilNodeHeartbeatUnhealthy
+        expr: |
+          max without(reason) (
+            agil_node_readiness_state{job="agil-node-agent",reason=~"not_registered|no_heartbeat|heartbeat_failing|heartbeat_stale"}
+          ) == 1
+        for: 2m
+        labels:
+          severity: warning
+          runbook: docs/node-image.md#monitor-the-node
+        annotations:
+          summary: "AGIL node is not reporting to Core"
+          description: "The agent responds to scrapes. Inspect agil_node_readiness_state or /readyz for the reason."
+
+      - alert: AgilNodeMediaUnready
+        expr: |
+          (agil_node_media_ready{job="agil-node-agent"} == 0)
+          and on(job, instance) (agil_node_draining{job="agil-node-agent"} == 0)
+        for: 2m
+        labels:
+          severity: critical
+          runbook: docs/node-image.md#monitor-the-node
+        annotations:
+          summary: "AGIL node media service is unready"
+          description: "{{ $labels.process }} did not pass its readiness probe."
+
+  - name: agil-availability
+    rules:
+      - alert: AgilAppHealthDown
+        expr: probe_success{job="agil-app-health"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          runbook: docs/operations.md#87-app-container-crash-loop--5xx
+        annotations:
+          summary: "AgilFrame /v1/health probe is failing"
+          description: "The public health endpoint has failed for 2 minutes. Check the app container, then Caddy/HAProxy (runbooks §8.7, §8.3)."
+
+      - alert: AgilAppHealthFlapping
+        expr: avg_over_time(probe_success{job="agil-app-health"}[10m]) < 0.95
+        for: 10m
+        labels:
+          severity: warning
+          runbook: docs/operations.md#87-app-container-crash-loop--5xx
+        annotations:
+          summary: "AgilFrame health probe is flapping"
+          description: "More than 5% of probes failed in 10 minutes: restart loop, OOM or proxy timeouts."
+
+      - alert: AgilAppHealthNoData
+        expr: absent(probe_success{job="agil-app-health"})
+        for: 15m
+        labels:
+          severity: warning
+          runbook: docs/operations.md#42-prometheus-layout
+        annotations:
+          summary: "No health probe data"
+          description: "Prometheus has no probe_success for the app job: broken scrape config, blackbox down, or wrong target."
+
+      - alert: AgilAppSlowProbe
+        expr: probe_duration_seconds{job="agil-app-health"} > 1
+        for: 10m
+        labels:
+          severity: warning
+          runbook: docs/operations.md#87-app-container-crash-loop--5xx
+        annotations:
+          summary: "AgilFrame health probe is slow"
+          description: "p95 probe latency above 1s for 10m; check host CPU/memory and the proxy."
+
+      - alert: AgilTlsExpiringSoon
+        expr: (probe_ssl_earliest_cert_expiry{job="agil-app-health"} - time()) < 21 * 86400
+        for: 1h
+        labels:
+          severity: warning
+          runbook: docs/operations.md#88-tls-expiry--domain-failure
+        annotations:
+          summary: "TLS certificate expires in less than 21 days"
+          description: "Check Caddy ACME renewal and DNS; do not delete ACME storage."
+
+      - alert: AgilTlsExpiryCritical
+        expr: (probe_ssl_earliest_cert_expiry{job="agil-app-health"} - time()) < 7 * 86400
+        for: 10m
+        labels:
+          severity: critical
+          runbook: docs/operations.md#88-tls-expiry--domain-failure
+        annotations:
+          summary: "TLS certificate expires in less than 7 days"
+          description: "Immediate renewal required; an expired certificate breaks WSS and all calls."
+
+      - alert: AgilSfuNodeDown
+        expr: up{job=~"agil-sfu-.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          runbook: docs/operations.md#81-sfu-node-down
+        annotations:
+          summary: "LiveKit SFU node {{ $labels.job }} is down"
+          description: "Rooms hosted on this node are lost; clients reconnect to the surviving node. Follow §8.1."
+
+      - alert: AgilSfuSignalingUnreachable
+        expr: probe_success{job="agil-sfu-tcp"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          runbook: docs/operations.md#81-sfu-node-down
+        annotations:
+          summary: "SFU signaling port unreachable: {{ $labels.instance }}"
+          description: "TCP connect to the LiveKit signaling port failed; check firewall, container and host."
+
+      - alert: AgilSfuNoMetrics
+        expr: absent(livekit_room_total{job=~"agil-sfu-.*"})
+        for: 10m
+        labels:
+          severity: warning
+          runbook: docs/operations.md#22-sfu-nodes
+        annotations:
+          summary: "No LiveKit metrics are being scraped"
+          description: "Check prometheus.port in livekit.yaml (6789/6790), the scrape job and network policy."
+
+      - alert: AgilEgressHealthDown
+        expr: probe_success{job="agil-egress-health"} == 0
+        for: 3m
+        labels:
+          severity: critical
+          runbook: docs/operations.md#85-egress-stuck--failed
+        annotations:
+          summary: "Egress worker health endpoint is down"
+          description: "Recordings/streams will fail. Check the worker container, Redis registration and disk."
+
+  - name: agil-capacity
+    rules:
+      - alert: AgilDiskHigh
+        expr: |
+          (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"}) < 0.20
+        for: 15m
+        labels:
+          severity: warning
+          runbook: docs/operations.md#84-disk-full
+        annotations:
+          summary: "Disk {{ $labels.mountpoint }} on {{ $labels.instance }} is above 80% used"
+          description: "Apply retention or offload recordings before it reaches the critical threshold."
+
+      - alert: AgilDiskCritical
+        expr: |
+          (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"}) < 0.10
+        for: 5m
+        labels:
+          severity: critical
+          runbook: docs/operations.md#84-disk-full
+        annotations:
+          summary: "Disk {{ $labels.mountpoint }} on {{ $labels.instance }} is above 90% used"
+          description: "Audit/files writes will fail. Stop egress, free space safely, do not rm data."
+
+      - alert: AgilMemoryHigh
+        expr: (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) < 0.15
+        for: 15m
+        labels:
+          severity: warning
+          runbook: docs/operations.md#87-app-container-crash-loop--5xx
+        annotations:
+          summary: "Host memory available is below 15% on {{ $labels.instance }}"
+          description: "OOM risk for the app (mem_limit 768m), SFU and Docker."
+
+      - alert: AgilAppContainerRestarting
+        # cAdvisor labels differ between versions; both `container` and `name`
+        # are accepted so the rule works on either. `changes()` on the start
+        # timestamp is the reliable signal for a restart (a gauge, not a counter).
+        expr: |
+          changes(container_start_time_seconds{container=~".*agil-calls.*"}[15m]) > 2
+          or changes(container_start_time_seconds{name=~".*agil-calls.*"}[15m]) > 2
+        for: 5m
+        labels:
+          severity: warning
+          runbook: docs/operations.md#87-app-container-crash-loop--5xx
+        annotations:
+          summary: "App container restarted more than twice in 15 minutes"
+          description: "Look for OOMKilled, disk errors or a bad deploy; requires cAdvisor."
+
+      - alert: AgilSfuNackRate
+        expr: |
+          (
+            sum by (job) (rate(livekit_nack_total[5m]))
+            /
+            clamp_min(sum by (job) (rate(livekit_packet_total[5m])), 1)
+          ) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+          runbook: docs/operations.md#81-sfu-node-down
+        annotations:
+          summary: "High NACK ratio on {{ $labels.job }}"
+          description: "Above 5% packet retransmission: network loss, overloaded node or UDP path problems."
+
+      - alert: AgilSfuRoomSkew
+        expr: |
+          (
+            (max(livekit_room_total) / scalar(clamp_min(sum(livekit_room_total), 1))) > 0.8
+          )
+          and on() (sum(livekit_room_total) >= 5)
+        for: 30m
+        labels:
+          severity: warning
+          runbook: docs/operations.md#53-app-ha-now-warm-standby--restore
+        annotations:
+          summary: "More than 80% of rooms are on one SFU node"
+          description: "Rooms are pinned to nodes; a long-lived skew means the other node is not being scheduled (check Caddy/HAProxy balancing and node health)."
+
+      - alert: AgilEgressUnavailable
+        expr: livekit_egress_available == 0
+        for: 5m
+        labels:
+          severity: warning
+          runbook: docs/operations.md#85-egress-stuck--failed
+        annotations:
+          summary: "Egress reports no available capacity"
+          description: "The worker is busy or wedged; new recordings will queue or fail."
+
+  - name: agil-data
+    rules:
+      - alert: AgilRedisDown
+        expr: redis_up == 0 or up{job="agil-redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          runbook: docs/operations.md#82-redis-down
+        annotations:
+          summary: "LiveKit Redis / redis_exporter is down"
+          description: "New SFU rooms and egress jobs will fail; the app API keeps working. Follow §8.2."
+
+      - alert: AgilBackupStale
+        expr: time() - agil_backup_last_success_timestamp_seconds > 26 * 3600
+        for: 1h
+        labels:
+          severity: warning
+          runbook: docs/operations.md#89-backup-failure
+        annotations:
+          summary: "No successful AgilFrame backup in 26 hours"
+          description: "RPO is 24h. Check the cron/systemd timer and scripts/backup-data.sh output. Requires --metrics-textfile."
+
+      - alert: AgilBackupMissing
+        expr: time() - agil_backup_last_success_timestamp_seconds > 48 * 3600
+        for: 1h
+        labels:
+          severity: critical
+          runbook: docs/operations.md#89-backup-failure
+        annotations:
+          summary: "No successful AgilFrame backup in 48 hours"
+          description: "DR is at risk: restore points are older than 2 days."

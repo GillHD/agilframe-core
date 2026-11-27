@@ -1,0 +1,48 @@
+# Copy to terraform.tfvars and edit. This file is gitignored.
+# No secrets: SSH keys are referenced by name; TURN/API secrets are generated
+# on the host by agil/infra/quickstart/install.sh.
+
+aws_region  = "eu-central-1"
+project_name = "agil"
+environment  = "demo"
+
+# REQUIRED: your office/home/CI egress CIDR. Never 0.0.0.0/0 for SSH.
+# A /0 route is rejected at plan time; allow_world_admin is a demo-only escape hatch.
+admin_cidr        = "203.0.113.10/32"
+allow_world_admin = false
+
+# Existing EC2 key pair. Leave empty to use SSM Session Manager instead
+# (enable_ssm=true attaches the required instance profile); console access also
+# works. Do not set ssh_key_name to a key you do not control.
+ssh_key_name = "my-ssh-key"
+ssh_enabled  = true
+# IAM role + instance profile with AmazonSSMManagedInstanceCore (recommended).
+enable_ssm = true
+
+# Public hostname. Leave create_dns_records=false until you know the zone id.
+domain_name        = "calls.example.com"
+create_dns_records = false
+route53_zone_id    = ""
+
+# Compute
+core_instance_type = "t3.small"
+node_count         = 1
+node_instance_type = "t3.small"
+core_volume_size   = 30
+node_volume_size   = 30
+
+# Media ports
+turn_port           = 3478
+turn_relay_min_port = 49200
+turn_relay_max_port = 49250
+# Open 5349/tcp only when coturn actually has a TLS certificate configured.
+enable_turn_tls     = false
+enable_sfu_ports    = false
+
+# Open 80/443 to the world so a TLS proxy can obtain certificates.
+public_web_enabled = true
+
+# Extra tags
+tags = {
+  Owner = "platform-team"
+}

@@ -1,0 +1,19 @@
+# Grafana datasource provisioning for the optional AgilFrame observability stack.
+#
+# The fixed uid `prometheus` is what agil/core/deploy/observability/grafana/agil-calls-ops.json
+# references. If you import the dashboard into another Grafana, use the same uid
+# (or bulk-replace the uid in the JSON).
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      timeInterval: 30s

@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" preserveAspectRatio="xMidYMid slice" role="img">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5b3f7a"/>
+      <stop offset="0.3" stop-color="#b9567a"/>
+      <stop offset="0.58" stop-color="#ef8354"/>
+      <stop offset="0.82" stop-color="#f9b26b"/>
+      <stop offset="1" stop-color="#ffe0a3"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#fff6d4"/>
+      <stop offset="0.45" stop-color="#ffdf9b" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#ffbf6b" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="duneA" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e79a56"/>
+      <stop offset="1" stop-color="#c9763c"/>
+    </linearGradient>
+    <linearGradient id="duneB" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c8713a"/>
+      <stop offset="1" stop-color="#a4522a"/>
+    </linearGradient>
+    <linearGradient id="duneC" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8d3f22"/>
+      <stop offset="1" stop-color="#652a18"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#sky)"/>
+  <circle cx="900" cy="398" r="190" fill="url(#sun)"/>
+  <circle cx="900" cy="398" r="66" fill="#ffefc2"/>
+  <g fill="#f7c98c" opacity="0.35">
+    <ellipse cx="260" cy="140" rx="230" ry="20"/>
+    <ellipse cx="560" cy="190" rx="160" ry="13"/>
+    <ellipse cx="1060" cy="160" rx="180" ry="15"/>
+  </g>
+  <path d="M0 470 C220 420 360 500 560 486 C760 472 900 420 1100 470 C1180 490 1240 486 1280 476 L1280 720 L0 720 Z" fill="url(#duneA)"/>
+  <path d="M0 556 C200 512 330 604 540 584 C750 564 880 508 1080 568 C1160 592 1230 590 1280 578 L1280 720 L0 720 Z" fill="url(#duneB)"/>
+  <path d="M0 646 C240 604 420 682 640 664 C860 646 1020 606 1200 660 C1232 670 1258 672 1280 670 L1280 720 L0 720 Z" fill="url(#duneC)"/>
+  <g stroke="#ffd9a4" stroke-opacity="0.4" stroke-width="2" fill="none">
+    <path d="M120 516 C300 486 430 526 600 512"/>
+    <path d="M700 604 C860 574 1000 604 1180 584"/>
+    <path d="M220 682 C420 654 580 690 760 674"/>
+  </g>
+  <g fill="#5d2615" opacity="0.5">
+    <path d="M180 556 c10 -26 26 -26 36 0 c-12 -6 -24 -6 -36 0 Z"/>
+    <path d="M1050 632 c12 -30 30 -30 42 0 c-14 -7 -28 -7 -42 0 Z"/>
+  </g>
+</svg>

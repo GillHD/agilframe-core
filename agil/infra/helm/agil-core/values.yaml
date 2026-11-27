@@ -1,0 +1,257 @@
+# AGIL Core — reference values.
+#
+# Secrets are NEVER committed here. Either:
+#   * let the chart generate AGIL_TOKEN_SECRET / AGIL_IP_SALT / the first API
+#     key on install (preserved across upgrades via `helm upgrade`), or
+#   * set one of the `secrets.*` values in a private values file / --set, or
+#   * point `secrets.existingSecret` at a Secret you manage (External Secrets,
+#     Sealed Secrets, Vault). Keys must be the AGIL_* env names.
+#
+# The chart does not depend on any ingress controller, Redis or Postgres:
+# every integration is optional.
+
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: agil-calls
+  # Pin an immutable tag or a digest. Digest wins when both are set.
+  tag: "0.1.0"
+  digest: ""
+  pullPolicy: IfNotPresent
+
+# 0.1.0 rooms/WebSockets/chat live in one process: scaling this Deployment
+# breaks in-flight rooms. Keep 1 until core ships a shared-state multi-node mode.
+replicaCount: 1
+revisionHistoryLimit: 3
+# Recreate avoids two pods serving the same volume during an upgrade.
+deploymentStrategy:
+  type: Recreate
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+  # The core does not call the Kubernetes API.
+  automountServiceAccountToken: false
+
+podAnnotations: {}
+podLabels: {}
+
+# The image runs as uid/gid 1000 (`node`).
+podSecurityContext:
+  fsGroup: 1000
+  fsGroupChangePolicy: OnRootMismatch
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+service:
+  type: ClusterIP
+  port: 8787
+  portName: http
+  annotations: {}
+
+# Public hostname used for join links, custom-domain CNAME target and the
+# default ingress host. `publicOrigin` defaults to https://<domain>.
+domain: calls.example.com
+publicOrigin: ""
+
+# Keep true only behind a proxy that overwrites X-Forwarded-* (all examples do).
+trustProxy: true
+# false = room creation and token issuance require an x-api-key.
+allowAnonymous: false
+defaultTenant: demo
+
+# Use "header" behind a CDN/WAF that sets a trusted country header, "ipapi" to
+# call an external geo service, or "none" to disable geo policy.
+geoProvider: header
+geoHeaderAllow: true
+
+# Optional media-plane endpoints (leave empty when unused).
+sfuUrl: ""
+sipUrl: ""
+egressUrl: ""
+
+features:
+  # /docs + OpenAPI. Close it in a customer deployment (or use the allowlist).
+  docs: true
+  adminApi: true
+  # HTTP MCP is a separate process; the flag only advertises the capability.
+  mcpHttp: false
+  sip: false
+  egress: false
+  sfu: false
+
+# Passed verbatim to clients in `welcome.iceServers`. TURN credentials are
+# client-visible by design; rotate them and keep them out of public repos.
+iceServers:
+  - urls: "stun:turn.example.com:3478"
+  - urls: "turn:turn.example.com:3478?transport=udp"
+    username: agil
+    credential: ""
+  - urls: "turn:turn.example.com:3478?transport=tcp"
+    username: agil
+    credential: ""
+
+# Comma-separated IP allowlists (empty = everyone). Only meaningful when the
+# ingress passes real client IPs.
+docsAllowIps: ""
+adminAllowIps: ""
+mcpHttpAllowIps: ""
+
+# --- optional dependencies -------------------------------------------------
+# Core 0.1.0 persists to the volume below and does NOT read Redis/Postgres.
+# These blocks are for forward-compatible builds and for co-located components;
+# `injectEnv` renders AGIL_REDIS_URL / AGIL_DATABASE_URL into the pod secret.
+# The latter supplies PostgreSQL chat history for tenants that select postgres.
+redis:
+  enabled: false
+  url: "" # redis://:password@redis.example.internal:6379/0
+  injectEnv: false
+
+postgres:
+  enabled: false
+  url: "" # postgres://agil:password@postgres.example.internal:5432/agil?sslmode=require
+  injectEnv: false
+
+# --- secrets ---------------------------------------------------------------
+# Leave empty to auto-generate (token secret, IP salt, first API key).
+# Provide values from a private file, never from this defaults file.
+#
+# GitOps / `helm template` warning: generation uses randAlphaNum and preserves
+# values only through a live-cluster `lookup` on upgrade. Renderers that cannot
+# query the cluster (ArgoCD, Flux, `helm template`, CI diffs) will produce NEW
+# random values on every sync, rotating AGIL_TOKEN_SECRET and invalidating every
+# join link and dashboard session. For GitOps set `existingSecret` to a Secret
+# managed by External Secrets/Sealed Secrets/SOPS; do not rely on generation.
+secrets:
+  existingSecret: ""
+  tokenSecret: ""
+  ipSalt: ""
+  apiKeys: ""
+  platformKey: ""
+  scimToken: ""
+  e2eeSecret: ""
+  mcpHttpToken: ""
+  deepseekApiKey: ""
+  aiAgentHmacSecret: ""
+  integrityKey: ""
+  sttKey: ""
+  sfuApiKey: ""
+  sfuApiSecret: ""
+  egressApiKey: ""
+  egressApiSecret: ""
+  sipApiKey: ""
+  sipApiSecret: ""
+  oidcClientSecret: ""
+
+# --- persistence -----------------------------------------------------------
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 20Gi
+  annotations: {}
+  mountPath: /app/.data
+
+# --- resources and probes --------------------------------------------------
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+probes:
+  startup:
+    enabled: true
+    path: /v1/health
+    failureThreshold: 30
+    periodSeconds: 5
+    timeoutSeconds: 3
+  liveness:
+    enabled: true
+    path: /v1/health
+    initialDelaySeconds: 20
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    path: /v1/health
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+# --- ingress ---------------------------------------------------------------
+# Generic networking.k8s.io/v1 Ingress: works with ingress-nginx, HAProxy,
+# Traefik, Caddy or any controller that implements Ingress. Controller-specific
+# annotations belong in `ingress.annotations`.
+ingress:
+  enabled: true
+  className: ""
+  annotations: {}
+  hosts:
+    - host: "" # empty -> .Values.domain
+      paths:
+        - path: /
+          pathType: Prefix
+  # TLS is terminated by the ingress controller/load balancer. Provide a
+  # pre-created Secret or let cert-manager issue one via annotations.
+  tls:
+    enabled: true
+    secretName: "" # empty -> <fullname>-tls
+
+# --- scheduling / availability --------------------------------------------
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""
+terminationGracePeriodSeconds: 30
+enableServiceLinks: false
+
+podDisruptionBudget:
+  # Off by default: core 0.1.0 is single-replica, so a PDB cannot improve
+  # availability. With replicaCount <= minAvailable the template renders
+  # maxUnavailable: 1 instead of a drain-blocking minAvailable (P3-5). Enabling
+  # this at one replica is informational only.
+  enabled: false
+  minAvailable: 1
+
+# Horizontal scaling is intentionally off: one process owns room state.
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 75
+
+networkPolicy:
+  enabled: false
+  # Empty `from` means "any namespace". Tighten to your ingress namespace.
+  ingress:
+    - from: []
+      ports:
+        - protocol: TCP
+          port: 8787
+  egress: []
+
+extraEnv: []
+extraEnvFrom: []

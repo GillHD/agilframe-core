@@ -1,0 +1,100 @@
+# CI: JavaScript / TypeScript monorepo (Node 23).
+#
+# Covers the migrated `agil/` workspaces (core apps/packages, websdk, mobile JS
+# plugins): install -> full build -> typecheck -> unit tests -> dist artifacts.
+#
+# Order matters on a clean checkout (`git archive` / fresh clone): `npm ci` only
+# installs packages, while the workspaces resolve each other through the *built*
+# `dist/` trees — `@agil/protocol`, `@agil/security` and `@agil/ai` point their
+# `types`/`exports` at `dist/*.d.ts` and `dist/*.js`. So `npm run typecheck`
+# fails with `TS2307` until those are built. Tests need built artifacts too:
+# `@agil/calls-server` static-docs serves demo/editor/dashboard `dist/` (missing
+# builds answer 503) and `@agil/mcp` spawns `dist/index.js`. Building everything
+# once, before typecheck and tests, is the shortest order that always works and
+# leaves the artifact step with nothing left to build.
+#
+# No deployment happens here. Container publishing lives in release-images.yml.
+name: CI / JS
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-js-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '23'
+  CI: 'true'
+  NPM_CONFIG_AUDIT: 'false'
+  NPM_CONFIG_FUND: 'false'
+
+jobs:
+  js:
+    name: JS (Node 23)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # Produces every `dist/` consumed by the next two steps (protocol/security/
+      # ai types, server, MCP, demo/editor/dashboard static builds, SDKs) and
+      # the artifacts uploaded below, so nothing is built twice.
+      - name: Build all workspaces
+        run: npm run build
+
+      - name: Typecheck all workspaces
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      # Static validation of the all-in-one node image compose file. No image is
+      # built here (release-images.yml does that on tags); this catches YAML,
+      # interpolation and service/volume/healthcheck mistakes on every PR.
+      - name: Validate node image compose
+        working-directory: agil/core/nodes/all-in-one
+        run: |
+          cp .env.example .env
+          docker compose config -q
+          rm -f .env
+
+      - name: Collect build artifacts
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: js-dist-${{ github.sha }}
+          path: |
+            agil/core/apps/server/dist/
+            agil/core/apps/dashboard/dist/
+            agil/core/apps/editor/dist/
+            agil/core/packages/protocol/dist/
+            agil/core/packages/security/dist/
+            agil/core/packages/ai/dist/
+            agil/core/packages/mcp/dist/
+            agil/websdk/sdk/dist/
+            agil/websdk/widget/dist/
+            agil/websdk/embed/dist/
+            agil/websdk/demo/dist/
+            agil/mobile/capacitor/dist/
+            agil/mobile/react-native/dist/
+          if-no-files-found: error
+          retention-days: 7

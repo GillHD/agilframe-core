@@ -1,0 +1,134 @@
+# LiveKit Egress v1.15.0 — production worker configuration TEMPLATE.
+#
+# This file is NOT mounted directly: it contains ${...} placeholders that are
+# rendered from `agil/core/deploy/egress/.env` by `render-config.sh` into a root-owned
+# 0640 file OUTSIDE the repository (default /etc/agil-egress/egress.yaml).
+# 0640 (not 0600) because egress runs as UID 1001 with primary group root and
+# must read the mounted file; the file contains no API keys.
+# Never commit the rendered file and never put real API keys in this template.
+#
+# Why the indirection: egress reads `redis.address` (and some S3 fields) only
+# from YAML, while API keys/secret can be supplied from the environment. The
+# template keeps the non-secret, environment-specific values (SFU URL, Redis
+# address, bucket) out of git too.
+#
+# Render:
+#   sh agil/core/deploy/egress/render-config.sh
+#   # -> /etc/agil-egress/egress.yaml (mode 640); docker-compose mounts it.
+#
+# Reference: https://docs.livekit.io/transport/self-hosting/egress/
+# Verified in the lab: agil/core/docs/egress-local-test.md (egress v1.15.0 + LiveKit v1.13.11).
+
+# api_key / api_secret are intentionally omitted. Egress reads them from the
+# LIVEKIT_API_KEY / LIVEKIT_API_SECRET environment variables set by compose.
+# This keeps the long-lived SFU secret out of every file on disk.
+
+# Signaling endpoint of the LiveKit server that dispatches jobs. The worker
+# joins the room here to capture media. Use wss:// in production. LIVEKIT_WS_URL
+# in the environment would override this value; the kit does not set it.
+# render-config.sh emits this value as a YAML single-quoted scalar.
+ws_url: ${EGRESS_WS_URL}
+
+# Only needed for a plain ws:// endpoint on a trusted private network. Keep
+# false for wss://. It relaxes Chrome's local-network-access checks.
+insecure: ${EGRESS_INSECURE}
+
+# The Redis instance MUST be the same one used by the LiveKit server that
+# dispatches the job. Egress receives StartEgress over this Redis/psrpc bus;
+# there is no egress Twirp API on the worker. Do not expose Redis publicly.
+#
+# Default in this kit: a local SSH tunnel to the SFU host's 127.0.0.1:6379:
+#   ssh -N -L 127.0.0.1:16379:127.0.0.1:6379 ...
+# Set EGRESS_REDIS_ADDRESS=127.0.0.1:16379 for the tunnel, or a private VPC
+# address (e.g. 10.20.0.12:6379) when both hosts share a private network.
+# `address` is host:port only — never `rediss://...`; TLS is `use_tls` and the
+# logical database is `db` (both rendered from .env).
+redis:
+  address: ${EGRESS_REDIS_ADDRESS}
+  # Leave username/password empty for a loopback tunnel to the SFU's local
+  # Redis. If the SFU Redis requires AUTH, render a 0640 config with the
+  # password (EGRESS_REDIS_PASSWORD) and restrict the file to root.
+  username: ${EGRESS_REDIS_USERNAME}
+  password: ${EGRESS_REDIS_PASSWORD}
+  db: ${EGRESS_REDIS_DB}
+  # true for a TLS Redis (`rediss://`). Keep false for the loopback tunnel.
+  use_tls: ${EGRESS_REDIS_TLS}
+
+# Health and metrics. With `network_mode: host` these bind on the host, so the
+# firewall MUST block 8080/9090 from the internet. 8080 is a health/status
+# endpoint, NOT the egress Twirp API (that lives on the LiveKit server).
+health_port: 8080
+prometheus_port: 9090
+template_port: 7980
+debug_handler_port: 0
+
+logging:
+  level: info
+  json: true
+
+# Egress v1.15.0 runs Chrome with sandboxing disabled by default. The compose
+# file grants SYS_ADMIN + seccomp=unconfined, matching the lab that proved
+# MP4/RTMP/HLS. Hardening (enable_chrome_sandbox + seccomp profile, drop
+# SYS_ADMIN) is documented but was not tested end-to-end; do not enable both at
+# once without a canary.
+enable_chrome_sandbox: false
+
+# Bound runaway jobs. MP4 is finalized on stop; these limits protect disk/S3
+# spend if an operator forgets a stop call.
+session_limits:
+  file_output_max_duration: 4h
+  stream_output_max_duration: 12h
+  segment_output_max_duration: 12h
+  # 20 GiB on-disk cap for a single file output (protects /out and the
+  # container's temp directory). 0 would disable the cap.
+  file_output_max_size: 21474836480
+
+# Keep at most this many minutes of upload backlog per worker before new
+# uploads are rejected (default is already 60; explicit for operators).
+max_upload_queue: 60
+
+# Admission control for an 8 vCPU / 8 GB worker running one 720p multi-output
+# room composite (lab peak: 5.41 cores, 1.95 GB RSS). Cost 6.0 on 8 vCPU
+# allows exactly one composite (6/8 = 0.75 <= 0.80; two = 12/8 > 0.80).
+#
+# 4 vCPU / 4 GB single-output variant: set room_composite_cpu_cost: 3.0 and
+# max_memory: 3.5 (see agil/core/docs/egress-production.md §Capacity). Re-test before
+# changing either value.
+cpu_cost:
+  max_cpu_utilization: 0.80
+  max_memory: 7.0
+  memory_cost: 2.0
+  room_composite_cpu_cost: 6.0
+  track_composite_cpu_cost: 2.0
+  track_cpu_cost: 0.5
+  # audio-only room composites do not launch Chrome; cheaper.
+  audio_room_composite_cpu_cost: 1.0
+
+# Durable storage for MP4/HLS. Egress needs this for the app's relative
+# output paths (`<tenant>/<roomId>/...`). Credentials are supplied through
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (and optionally
+# AWS_SESSION_TOKEN) by compose; do not write them here.
+#
+# For MinIO set endpoint to http://127.0.0.1:9000 and
+# EGRESS_S3_FORCE_PATH_STYLE=true (the optional `minio` compose profile
+# publishes 9000 on loopback only). For AWS/compatible S3 use https://...;
+# keep `true` for MinIO/Ceph/most RU S3 clones, `false` for virtual-hosted AWS.
+storage:
+  s3:
+    region: ${EGRESS_S3_REGION}
+    endpoint: ${EGRESS_S3_ENDPOINT}
+    bucket: ${EGRESS_S3_BUCKET}
+    force_path_style: ${EGRESS_S3_FORCE_PATH_STYLE}
+    max_retries: 5
+    min_retry_delay: 100ms
+    max_retry_delay: 5s
+  # generate_presigned_url: false
+  # prefix: recordings/
+
+# Failure fallback: if the primary S3 upload fails, egress moves the file to
+# the local volume (mounted at /out). This is NOT durable production storage —
+# it exists so a short S3 outage does not lose a recording outright. Monitor
+# disk and copy/retry uploads. Remove this block to fail the job instead
+# (fail-closed) or point `backup` at a second bucket/region.
+backup:
+  prefix: /out/backup

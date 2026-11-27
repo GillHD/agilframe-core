@@ -1,0 +1,104 @@
+AGIL Core {{ .Chart.AppVersion }} is installed.
+
+Release:   {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+
+{{- if .Values.ingress.enabled }}
+URL:       {{ include "agil-core.publicOrigin" . }}
+Dashboard: {{ include "agil-core.publicOrigin" . }}/dashboard/
+Editor:    {{ include "agil-core.publicOrigin" . }}/editor/
+{{- else }}
+The ingress is disabled. Port-forward for a local check:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "agil-core.fullname" . }} 8787:{{ .Values.service.port }}
+  open http://127.0.0.1:8787/
+{{- end }}
+
+Health:
+
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "agil-core.fullname" . }} 8787:{{ .Values.service.port }}
+  curl -fsS http://127.0.0.1:8787/v1/health
+
+{{- if not .Values.secrets.existingSecret }}
+
+First API key (tenant {{ .Values.defaultTenant }}) and generated secrets:
+
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "agil-core.fullname" . }} \
+    -o jsonpath='{.data.AGIL_API_KEYS}' | base64 -d; echo
+
+Copy it into your dashboard login. Store it in a secret manager, not in shell
+history. The chart preserves generated secrets on `helm upgrade`.
+{{- else }}
+
+Secrets come from the existing Secret {{ .Values.secrets.existingSecret }}.
+It must provide AGIL_TOKEN_SECRET, AGIL_IP_SALT and AGIL_API_KEYS.
+{{- end }}
+
+{{- if not .Values.secrets.existingSecret }}
+
+GitOps warning: generated secrets use randAlphaNum and are preserved only by a
+live `helm upgrade` lookup. `helm template`, ArgoCD, Flux and other renderers
+cannot query the cluster and will rotate AGIL_TOKEN_SECRET/AGIL_IP_SALT/API key
+on every sync (invalidating join links and sessions). For GitOps set
+`secrets.existingSecret` to a pre-created Secret instead of generating values.
+{{- end }}
+
+{{- if and .Values.podDisruptionBudget.enabled (le (int .Values.replicaCount) (int .Values.podDisruptionBudget.minAvailable)) }}
+
+NOTE: podDisruptionBudget.enabled with replicaCount={{ .Values.replicaCount }} and
+minAvailable={{ .Values.podDisruptionBudget.minAvailable }} would block every
+node drain. The chart renders maxUnavailable: 1 instead (a no-op at one replica).
+Real disruption protection needs replicaCount > minAvailable, which core 0.1.0
+does not support.
+{{- end }}
+
+{{- if .Values.iceServers }}
+
+ICE servers advertised to clients:
+
+  stun/turn entries: {{ len .Values.iceServers }}
+  Check that TURN is reachable from the public internet (UDP {{ "3478" }} + relay
+  range) and that `credential` is set. Empty credentials make TURN unusable.
+{{- else }}
+
+WARNING: iceServers is empty — clients have no STUN/TURN and calls will fail
+behind NAT. Set iceServers in your values file.
+{{- end }}
+
+{{- if gt (int .Values.replicaCount) 1 }}
+
+WARNING: replicaCount={{ .Values.replicaCount }}. AGIL Core 0.1.0 stores rooms,
+sockets and chat in one process; multiple replicas split rooms and break calls.
+Keep replicaCount=1 and scale vertically.
+{{- end }}
+
+{{- if .Values.allowAnonymous }}
+
+WARNING: allowAnonymous=true lets anyone create rooms. Use it for demos only.
+{{- end }}
+
+{{- if .Values.features.docs }}
+
+NOTE: docs/OpenAPI are enabled (AGIL_DOCS_ENABLED=1). Restrict them with
+`docsAllowIps` or disable `features.docs` for a public customer deployment.
+{{- end }}
+
+{{- if not .Values.persistence.enabled }}
+
+WARNING: persistence.enabled=false — tenants, files and audit logs live in an
+emptyDir and are lost when the pod is replaced.
+{{- end }}
+
+Node enrollment (optional):
+  1. Create a one-time node token (dashboard → Cluster/Nodes or
+     POST /v1/admin/cluster/tokens with kind=node).
+  2. Install the node chart:
+       helm install agil-node infra/helm/agil-node \
+         --set core.url=http://{{ include "agil-core.fullname" . }}:{{ .Values.service.port }} \
+         --set enrollment.existingSecret=<secret-with-token>
+
+Upgrade:  helm upgrade --install {{ .Release.Name }} agil/infra/helm/agil-core -f my-values.yaml
+Rollback: helm rollback {{ .Release.Name }} <revision>
+
+Documentation: agil/infra/README.md · agil/core/docs/deployment.md

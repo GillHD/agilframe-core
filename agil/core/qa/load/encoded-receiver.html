@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>AgilFrame · WebRTC decoder benchmark</title>
+<style>
+  html { color-scheme: dark; font: 14px system-ui; background: #151923; }
+  body { margin: 0; }
+  main { height: 100dvh; display: grid; gap: 3px; grid-template-columns: repeat(var(--columns), minmax(0, 1fr)); grid-template-rows: repeat(var(--rows), minmax(0, 1fr)); }
+  figure { margin: 0; position: relative; min-height: 0; background: #0c1018; }
+  video { width: 100%; height: 100%; object-fit: contain; }
+  figcaption { position: absolute; bottom: 0; padding: 2px 4px; background: #000a; }
+</style>
+<main></main>
+<script src="/livekit.js"></script>
+<script>
+  const videos = new Map();
+  const grid = document.querySelector('main');
+  window.connectReceiver = async ({ url, token, count }) => {
+    const columns = Math.ceil(Math.sqrt(count));
+    grid.style.setProperty('--columns', columns);
+    grid.style.setProperty('--rows', Math.ceil(count / columns));
+    const room = new LivekitClient.Room({ adaptiveStream: false });
+    room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+      if (track.kind !== 'video') return;
+      const video = track.attach();
+      video.muted = true;
+      video.playsInline = true;
+      const tile = document.createElement('figure');
+      const label = document.createElement('figcaption');
+      label.textContent = participant.identity;
+      tile.append(video, label);
+      grid.append(tile);
+      const presented = { count: 0 };
+      const onFrame = (_, info) => {
+        presented.count = info.presentedFrames;
+        video.requestVideoFrameCallback(onFrame);
+      };
+      video.requestVideoFrameCallback(onFrame);
+      videos.set(participant.identity, { video, track, presented });
+    });
+    await room.connect(url, token);
+  };
+  window.startedVideos = () => [...videos.values()].filter(({ presented }) => presented.count > 0).length;
+  window.sampleReceiver = async () => Object.fromEntries(await Promise.all([...videos].map(async ([id, { video, track, presented }]) => {
+    const stat = await track.getReceiverStats();
+    const { droppedVideoFrames } = video.getVideoPlaybackQuality();
+    return [id, { width: video.videoWidth, height: video.videoHeight,
+      presented: presented.count, decoded: stat?.framesDecoded ?? null, dropped: droppedVideoFrames,
+      decoder: stat?.decoderImplementation ?? null, packetsLost: stat?.packetsLost ?? null }];
+  })));
+</script>
+</html>

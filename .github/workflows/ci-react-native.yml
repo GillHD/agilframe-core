@@ -1,0 +1,131 @@
+# CI: React Native / Expo plugin (@agil/calls-react-native).
+#
+# TypeScript typecheck / unit tests / build, followed by static checks of the
+# Expo config plugin, published package fields, export targets and npm tarball.
+#
+# The package is a WebView wrapper with optional React Native peers: no native
+# Gradle/Xcode project is compiled here. No deployment / no npm publish.
+name: CI / React Native
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-react-native-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '23'
+  CI: 'true'
+  NPM_CONFIG_AUDIT: 'false'
+  NPM_CONFIG_FUND: 'false'
+
+jobs:
+  react-native:
+    name: React Native plugin
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck -w @agil/calls-react-native
+
+      - name: Unit tests
+        run: npm test -w @agil/calls-react-native
+
+      - name: Build
+        run: npm run build -w @agil/calls-react-native
+
+      - name: Native/Expo plugin static checks
+        working-directory: agil/mobile/react-native
+        run: |
+          set -euo pipefail
+          test -f expo/withAgilCall.cjs
+          test -f src/index.ts
+          node --check expo/withAgilCall.cjs
+          node --check scripts/clean.mjs
+          node --check scripts/postbuild.mjs
+
+          # Expo plugin must keep covering iOS usage strings and Android perms.
+          grep -q 'NSCameraUsageDescription' expo/withAgilCall.cjs
+          grep -q 'NSMicrophoneUsageDescription' expo/withAgilCall.cjs
+          grep -q 'android.permission.CAMERA' expo/withAgilCall.cjs
+          grep -q 'android.permission.RECORD_AUDIO' expo/withAgilCall.cjs
+
+          # Package entry points must point at built files.
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const pkg = require('./package.json');
+          const entries = [pkg.main, pkg.module, pkg.types, pkg['react-native']].filter(Boolean);
+          const targets = [];
+          for (const [key, value] of Object.entries(pkg.exports ?? {})) {
+            if (typeof value === 'string') {
+              targets.push([key, value]);
+            } else if (value && typeof value === 'object') {
+              for (const [condition, target] of Object.entries(value)) {
+                if (typeof target === 'string') targets.push([`${key}#${condition}`, target]);
+              }
+            }
+          }
+          const missing = [...entries, ...targets.map(([, target]) => target)].filter(
+            (target) =>
+              target.startsWith('./') &&
+              (target.endsWith('.js') || target.endsWith('.d.ts') || target.endsWith('.cjs')) &&
+              !fs.existsSync(path.resolve(target)),
+          );
+          if (missing.length > 0) {
+            console.error('Missing entry points:', [...new Set(missing)]);
+            process.exit(1);
+          }
+          console.log(`Entry points OK (${entries.length} fields, ${targets.length} exports)`);
+          NODE
+
+          # The npm tarball must ship the built JS, typings and Expo plugin.
+          npm pack --dry-run --json > pack.json
+          node - <<'NODE'
+          const pack = require('./pack.json')[0];
+          const shipped = new Set(pack.files.map((file) => file.path));
+          const required = [
+            'dist/index.js',
+            'dist/cjs/index.js',
+            'dist/index.d.ts',
+            'expo/withAgilCall.cjs',
+          ];
+          const missing = required.filter((file) => !shipped.has(file));
+          if (missing.length > 0) {
+            console.error('Missing from npm tarball:', missing);
+            process.exit(1);
+          }
+          console.log(`npm tarball OK (${shipped.size} files)`);
+          NODE
+
+      - name: Upload package artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: react-native-results-${{ github.sha }}
+          path: |
+            agil/mobile/react-native/dist/
+            agil/mobile/react-native/pack.json
+          if-no-files-found: warn
+          retention-days: 7

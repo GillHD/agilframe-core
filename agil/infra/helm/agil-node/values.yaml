@@ -1,0 +1,184 @@
+# AGIL Node — reference values.
+#
+# The node loop is a control-plane unit: it registers this node's role
+# (sfu/turn/stun/all) with AGIL Core and heartbeats it. Media processes
+# (LiveKit, coturn) are deployed separately and are not part of this chart.
+#
+# Enrollment needs EITHER a one-time token (`enrollment.token` /
+# `enrollment.existingSecret`) OR an already-issued node key
+# (`enrollment.nodeKey`). Mint a token in the dashboard (Cluster/Nodes) or:
+#   curl -X POST https://calls.example.com/v1/admin/cluster/tokens \
+#     -H "x-api-key: $KEY" -H 'content-type: application/json' \
+#     -d '{"kind":"node","role":"sfu","features":["sfu"],"ttlSec":3600,"uses":1}'
+# Put it in a Secret, never in a committed values file.
+
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  # Same image as agil-core: the node runs the first-party enrollment CLI
+  # (`agil/core/scripts/agil-cli.mjs`) inside the standard server image.
+  # No separate node image is required.
+  repository: agil-calls
+  tag: "0.1.0"
+  digest: ""
+  pullPolicy: IfNotPresent
+
+# One node identity per release. To run several nodes, install several releases
+# with distinct fullnameOverride/name and distinct node.id values (or use one
+# StatefulSet per node outside this chart). Scaling a Deployment to N replicas
+# would give every pod the same node id and the second registration gets 409.
+replicaCount: 1
+revisionHistoryLimit: 3
+deploymentStrategy:
+  type: Recreate
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+  automountServiceAccountToken: false
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 1000
+  fsGroupChangePolicy: OnRootMismatch
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+# Where the loop finds core. Use the in-cluster Service URL when both charts
+# live in the same cluster; use https://... through the ingress when the node is
+# remote. TLS is strongly recommended: enrollment tokens and node keys are
+# bearer secrets.
+core:
+  url: http://agil-core:8787
+
+enrollment:
+  # A Secret you manage. If set, it must contain the token and/or node key under
+  # the keys below. The chart does not create a Secret in this mode.
+  existingSecret: ""
+  tokenKey: AGIL_NODE_TOKEN
+  # One-time enrollment token (burned on first register). Avoid --set in shell
+  # history; prefer a private values file or existingSecret.
+  token: ""
+  # A pre-issued node key (nk_...) from a previous registration. Lets the pod
+  # skip enrollment entirely (rotating state volume/restarts is then safe).
+  nodeKeyKey: AGIL_NODE_KEY
+  nodeKey: ""
+  # Optional separate Secret for the node key (defaults to existingSecret or the
+  # chart-managed Secret).
+  nodeKeySecret: ""
+
+node:
+  # Empty -> fullname (unique per release).
+  id: ""
+  name: ""
+  # sfu | turn | stun | all
+  role: sfu
+  # e.g. [sfu], [sfu,egress], [turn]
+  features:
+    - sfu
+  region: ""
+  # Informational URL of the media process this node fronts. Empty -> derived
+  # from domain/tls below.
+  endpoint: ""
+  # Optional capacity hints recorded on the node record.
+  capacity: {}
+  # {"maxRooms":10,"maxParticipants":500}
+  heartbeatIntervalSec: 30
+  logLevel: info
+
+# Public hostname of the media process (informational; used for node.endpoint
+# default). The endpoint scheme follows tls.enabled. This chart does not expose
+# an HTTP port of its own: probes read the heartbeat file from the state volume.
+domain: sfu.example.com
+tls:
+  # Only selects the node.endpoint scheme here. TLS for the media process is
+  # managed by that process's own ingress; secretName is reserved/documentation.
+  enabled: false
+  secretName: ""
+
+# Connection details for the media process this node fronts (LiveKit/egress).
+# The node loop does NOT connect to Redis/Postgres; they are rendered into a
+# ConfigMap for that co-located workload and as operator documentation. Put
+# passwords in a Secret and mount the ConfigMap into the media pod, not here.
+redis:
+  url: "" # redis://:password@redis.example.internal:6379/0
+postgres:
+  url: "" # postgres://user:password@postgres.example.internal:5432/agil?sslmode=require
+
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+  annotations: {}
+  mountPath: /var/lib/agil-node
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+# Probes are exec-based: `<mountPath>/node.json` proves enrollment, and the
+# heartbeat-at file is refreshed after every accepted heartbeat.
+probes:
+  startup:
+    enabled: true
+    failureThreshold: 30
+    periodSeconds: 2
+  liveness:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 20
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 15
+    failureThreshold: 3
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""
+terminationGracePeriodSeconds: 20
+enableServiceLinks: false
+
+podDisruptionBudget:
+  # One node identity per release, so a PDB cannot improve availability; with
+  # replicaCount <= minAvailable the template renders maxUnavailable: 1 (no-op
+  # guard) instead of blocking every node drain.
+  enabled: false
+  minAvailable: 1
+
+networkPolicy:
+  enabled: false
+  # The node only makes outbound calls (core API + image pulls). Deny inbound
+  # by leaving this empty; add egress rules only if your CNI requires them.
+  ingress: []
+  egress: []
+
+extraEnv: []
+extraEnvFrom: []

@@ -1,0 +1,59 @@
+AGIL Node {{ .Chart.AppVersion }} is installed.
+
+Release:   {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+Node id:   {{ include "agil-node.nodeId" . }}
+Role:      {{ .Values.node.role }}
+Features:  {{ join "," .Values.node.features }}
+Core:      {{ .Values.core.url }}
+Endpoint:  {{ include "agil-node.endpoint" . }} (informational)
+
+The pod runs the standard agil-calls image with the first-party enrollment CLI
+(`agil/core/scripts/agil-cli.mjs`). No extra node image is used.
+
+{{- if or .Values.enrollment.existingSecret .Values.enrollment.token .Values.enrollment.nodeKey }}
+
+Check enrollment and heartbeats:
+
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "agil-node.fullname" . }} --tail=50
+
+  # "enrolled" means node.json exists; the key itself is not printed.
+  kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "agil-node.fullname" . }} -- \
+    sh -c 'test -s "{{ .Values.persistence.mountPath }}/node.json" && echo enrolled'
+
+  # Last accepted heartbeat (unix seconds); readiness goes false after 90 s.
+  kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "agil-node.fullname" . }} -- \
+    cat "{{ .Values.persistence.mountPath }}/heartbeat-at"
+
+Then confirm the node record in core:
+
+  curl -H "x-api-key: $AGIL_API_KEY" {{ .Values.core.url }}/v1/admin/cluster/status
+
+{{- else }}
+
+WARNING: no enrollment token or node key was configured. The pod will start and
+then exit with a clear error until you provide one. Create a one-time token
+(dashboard → Infrastructure, or POST /v1/admin/cluster/tokens with kind=node),
+store it in a Secret, and upgrade:
+
+  kubectl -n {{ .Release.Namespace }} create secret generic {{ include "agil-node.fullname" . }}-enrollment \
+    --from-literal=AGIL_NODE_TOKEN='<one-time-token>'
+  helm upgrade {{ .Release.Name }} agil/infra/helm/agil-node -n {{ .Release.Namespace }} \
+    --set enrollment.existingSecret={{ include "agil-node.fullname" . }}-enrollment
+
+{{- end }}
+
+The token is burned on the first successful registration; the node key is kept
+in the `{{ include "agil-node.fullname" . }}` PVC at
+{{ .Values.persistence.mountPath }}/node.json (mode 0600). To rotate: disable the
+node in core (`POST /v1/admin/nodes/:id/disable`), delete the PVC, enroll again.
+
+This chart does NOT run LiveKit/TURN. Deploy the media process separately and
+point `node.endpoint` at it; core's node registry does not probe that endpoint
+yet.
+
+Uninstall: helm uninstall {{ .Release.Name }} -n {{ .Release.Namespace }}
+The PVC is kept by Helm; remove it only after the node is disabled in core.
+
+Docs: agil/infra/README.md · agil/core/docs/api/cluster.md

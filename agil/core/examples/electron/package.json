@@ -1,0 +1,13 @@
+{
+  "name": "agil-calls-electron-example",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AgilFrame inside Electron: permissions, screen sharing, call as part of the app window",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}

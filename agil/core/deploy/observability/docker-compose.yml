@@ -1,0 +1,98 @@
+# AgilFrame — optional observability stack (Prometheus + blackbox + Grafana).
+#
+# NOT deployed by the repository. Run it only on a monitoring host, keep every
+# published port on 127.0.0.1, and reach Grafana through an SSH tunnel:
+#
+#   cp agil/core/deploy/observability/.env.example /tmp/observability.env   # if you keep one
+#   GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 16)" docker compose \
+#     -f agil/core/deploy/observability/docker-compose.yml up -d
+#   ssh -L 3000:127.0.0.1:3000 user@monitoring-host
+#
+# The metrics endpoints of LiveKit (:6789/:6790), egress (:8080/:9090) and this
+# Prometheus have no authentication. Never expose them to the internet; scrape
+# them over a private network.
+#
+# Replace *.internal targets and calls.example.com in prometheus.yml first.
+
+name: agil-observability
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle
+      - --web.listen-address=0.0.0.0:9090
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./agil-alerts.yml:/etc/prometheus/rules/agil-alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - blackbox-exporter
+    mem_limit: 512m
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/blackbox_exporter/config.yml
+      - --web.listen-address=:9115
+    volumes:
+      - ./blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    ports:
+      - "127.0.0.1:9115:9115"
+    mem_limit: 128m
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    restart: unless-stopped
+    environment:
+      # Required: no default password is shipped.
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD (e.g. openssl rand -hex 16)}"
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_HTTP_ADDR: "0.0.0.0"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/agil-calls-ops.json:/var/lib/grafana/dashboards/agil-calls-ops.json:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+    mem_limit: 256m
+
+  # Optional per-container CPU/RAM/restarts for the app. Enable with:
+  #   docker compose -f agil/core/deploy/observability/docker-compose.yml --profile cadvisor up -d
+  # then uncomment the `cadvisor` job in prometheus.yml.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    profiles: ["cadvisor"]
+    restart: unless-stopped
+    command:
+      - --listen_ip=0.0.0.0
+      - --port=8080
+      - --housekeeping_interval=30s
+      - --docker_only=true
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    ports:
+      - "127.0.0.1:8081:8080"
+    mem_limit: 256m
+
+volumes:
+  prometheus-data:
+  grafana-data:

@@ -1,0 +1,71 @@
+# LiveKit SFU configuration — AgilFrame S0 spike.
+#
+# Keys are NOT stored here. The server reads them from the LIVEKIT_KEYS
+# environment variable (see docker-compose.yml):
+#   LIVEKIT_KEYS="<api-key>: <api-secret>"
+#
+# Ports below must stay in sync with docker-compose.yml:
+#   7880/tcp  HTTP + WebSocket signaling
+#   7881/tcp  RTC over TCP fallback
+#   50000-50100/udp  RTC media (test range)
+#
+# Docs: https://docs.livekit.io/home/self-hosting/deployment/
+
+port: 7880
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+
+  # Derive the advertised public IP with STUN. Works on hosts that own a
+  # public IP (like the test box). Behind 1:1 NAT or with UDP egress blocked,
+  # STUN may fail: then set `node_ip` to the public IP explicitly and open the
+  # same UDP range on the firewall.
+  use_external_ip: true
+  # node_ip: 203.0.113.10
+
+  # Single-port UDP mux (optional). Enable when only one UDP port can be
+  # opened, publish 7882/udp in compose, and keep tcp_port for fallback.
+  # When set, LiveKit uses this port for all media instead of the range above.
+  # udp_port: 7882
+
+redis:
+  # Compose service DNS name. On host networking use 127.0.0.1:6379 or the
+  # port published by the redis service (127.0.0.1:6380 with this compose).
+  address: redis:6379
+
+# Internal-only metrics for Prometheus. Not published by docker-compose.yml.
+prometheus:
+  port: 6789
+
+logging:
+  level: info
+
+# --- Production extras (disabled for the spike) -----------------------------
+#
+# Embedded TURN/TLS is what makes corporate/Symmetric-NAT clients work without
+# coturn. It needs a public DNS name and a certificate (or external TLS
+# termination). Do not enable without certs, or the server fails to start.
+#
+# turn:
+#   enabled: true
+#   domain: turn.example.com
+#   tls_port: 5349          # must be 443 when no L4 load balancer is used
+#   cert_file: /etc/letsencrypt/live/turn.example.com/fullchain.pem
+#   key_file: /etc/letsencrypt/live/turn.example.com/privkey.pem
+#   # udp_port: 443         # TURN/UDP fallback for QUIC-friendly firewalls
+#
+# Room lifecycle webhooks for the AGIL server (S2 integration). The server
+# validates LiveKit's signed Authorization header with the same API key.
+#
+# webhook:
+#   api_key: agil_sfu
+#   urls:
+#     - https://calls.example.com/v1/sfu/webhook
+#
+# Optional room defaults:
+# room:
+#   empty_timeout: 300
+#   departure_timeout: 20
+#   max_participants: 100

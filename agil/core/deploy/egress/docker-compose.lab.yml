@@ -1,0 +1,228 @@
+# AgilFrame — local egress lab (single host, Linux + Docker Compose).
+#
+# Brings up the full media/storage path **locally**:
+#   browser / lk load-test -> LiveKit SFU -> Redis -> egress worker
+#     -> MinIO (S3) -> app signed-playback proxy -> HLS/MP4 viewer
+#
+# This is NOT a production deployment. It exists to validate the S3/MinIO
+# upload and signed-playback path without Server 3. For production use
+# `agil/core/deploy/egress/docker-compose.yml` and the docs in
+# `agil/core/docs/egress-production-s3.md`.
+#
+#   cd agil/core/deploy/egress
+#   cp .env.lab.example .env.lab
+#   $EDITOR .env.lab                  # set LIVEKIT_API_SECRET + MINIO_ROOT_PASSWORD
+#   docker compose -f docker-compose.lab.yml --env-file .env.lab up -d --build
+#   docker compose -f docker-compose.lab.yml --env-file .env.lab ps
+#
+# Requirements: Linux (or WSL2 with Docker Engine), ~8 GB RAM free for one
+# 720p multi-output egress job, ports 7880/7881/tcp + 50000-50100/udp free.
+#
+# Why host networking for `egress` and `app`: the worker is addressed through
+# Redis, not a port, and Chrome/GStreamer need host media paths. On a Linux lab
+# host the published loopback ports below are enough for both to reach the SFU,
+# Redis and MinIO at 127.0.0.1.
+#
+# Secrets live only in `.env.lab` (chmod 600, never committed).
+
+name: agil-egress-lab
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "900", "1"]
+    ports:
+      # Loopback only; egress/app use host networking and reach 127.0.0.1.
+      - "127.0.0.1:${LAB_REDIS_PORT:-6380}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  livekit:
+    image: livekit/livekit-server:v1.13.11
+    restart: unless-stopped
+    command: ["--config", "/etc/livekit.yaml"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      # "<api-key>: <api-secret>". The app and egress use the same pair.
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY in .env.lab}: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env.lab}"
+    volumes:
+      - ./livekit.lab.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "127.0.0.1:${LAB_SFU_HTTP_PORT:-7880}:7880/tcp"
+      - "127.0.0.1:${LAB_SFU_RTC_TCP_PORT:-7881}:7881/tcp"
+      - "50000-50100:50000-50100/udp"
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env.lab}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env.lab}"
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+
+  # Creates a private bucket and a lifecycle expiry rule. The app's playback
+  # proxy reads with the same credentials in this lab; production should use a
+  # least-privilege read-only user (see docs/egress-production-s3.md §4).
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?set MINIO_ROOT_USER}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}"
+      EGRESS_S3_BUCKET: "${EGRESS_S3_BUCKET:-agil-recordings}"
+      MINIO_RETENTION_DAYS: "${MINIO_RETENTION_DAYS:-30}"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        attempts=0
+        until mc alias set lab http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
+          attempts=$$((attempts + 1))
+          if [ "$$attempts" -ge 30 ]; then
+            echo "minio not reachable after 30 attempts; check the minio service and MINIO_ROOT_USER/MINIO_ROOT_PASSWORD" >&2
+            exit 1
+          fi
+          echo "waiting for minio ($$attempts/30)..."
+          sleep 2
+        done
+        mc mb --ignore-existing "lab/$$EGRESS_S3_BUCKET"
+        # Private bucket: no anonymous read/write. Playback goes through the
+        # app's HMAC-signed proxy, never a public bucket URL.
+        mc anonymous set none "lab/$$EGRESS_S3_BUCKET"
+        if [ -n "$${MINIO_RETENTION_DAYS:-}" ] && [ "$$MINIO_RETENTION_DAYS" != "0" ]; then
+          mc ilm rule rm --all --force "lab/$$EGRESS_S3_BUCKET" >/dev/null 2>&1 || true
+          mc ilm rule add --expire-days "$$MINIO_RETENTION_DAYS" "lab/$$EGRESS_S3_BUCKET"
+        fi
+        echo "bucket ready: $$EGRESS_S3_BUCKET (private, retention=$${MINIO_RETENTION_DAYS:-off}d)"
+
+  egress:
+    image: livekit/egress:v1.15.0
+    restart: unless-stopped
+    network_mode: host
+    shm_size: "1gb"
+    depends_on:
+      livekit:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    cpus: "${EGRESS_CPUS:-8.0}"
+    mem_limit: "${EGRESS_MEM_LIMIT:-8g}"
+    pids_limit: 4096
+    stop_grace_period: 180s
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=unconfined
+    environment:
+      # Lab-only inline config: the production kit renders a 0640 YAML file
+      # instead so no secrets are written into compose/env.
+      EGRESS_CONFIG_BODY: |
+        api_key: ${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY}
+        api_secret: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET}
+        ws_url: ws://127.0.0.1:${LAB_SFU_HTTP_PORT:-7880}
+        redis:
+          address: 127.0.0.1:${LAB_REDIS_PORT:-6380}
+        health_port: 8080
+        prometheus_port: 9090
+        logging:
+          level: info
+          json: true
+        enable_chrome_sandbox: false
+        storage:
+          s3:
+            access_key: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+            secret: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+            region: ${EGRESS_S3_REGION:-ru-msk}
+            bucket: ${EGRESS_S3_BUCKET:-agil-recordings}
+            endpoint: http://127.0.0.1:9000
+            force_path_style: true
+        backup:
+          prefix: /out/backup
+    volumes:
+      - "${EGRESS_OUT_DIR:-/srv/agil-egress/out}:/out"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  app:
+    build:
+      context: ../../../..
+      dockerfile: Dockerfile
+    image: agil-calls:lab
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      livekit:
+        condition: service_started
+      egress:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      PORT: "8787"
+      AGIL_DATA_DIR: /app/.data
+      AGIL_PUBLIC_ORIGIN: "${AGIL_PUBLIC_ORIGIN:-http://127.0.0.1:8787}"
+      AGIL_ALLOW_ANONYMOUS: "1"
+      AGIL_TOKEN_SECRET: "${AGIL_TOKEN_SECRET:?set AGIL_TOKEN_SECRET in .env.lab}"
+      AGIL_API_KEYS: "${AGIL_API_KEYS:-dev-key:demo}"
+      AGIL_ADMIN_API_ENABLED: "1"
+      # SFU + egress controller: same LiveKit keys as the worker.
+      AGIL_SFU_URL: "ws://127.0.0.1:${LAB_SFU_HTTP_PORT:-7880}"
+      AGIL_SFU_API_KEY: "${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY}"
+      AGIL_SFU_API_SECRET: "${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET}"
+      AGIL_EGRESS_URL: "http://127.0.0.1:${LAB_SFU_HTTP_PORT:-7880}"
+      AGIL_EGRESS_ENABLED: "1"
+      # Worker health port (`AGIL_EGRESS_HEALTH_URL`) for /v1/admin/egress/workers.
+      AGIL_EGRESS_HEALTH_URL: "http://127.0.0.1:8080"
+      # App-side S3 read credentials for the signed-playback proxy. The worker
+      # writes with the same MinIO root in this lab; production uses a separate
+      # read-only key.
+      AGIL_EGRESS_S3_ENDPOINT: "http://127.0.0.1:9000"
+      AGIL_EGRESS_S3_REGION: "${EGRESS_S3_REGION:-ru-msk}"
+      AGIL_EGRESS_S3_BUCKET: "${EGRESS_S3_BUCKET:-agil-recordings}"
+      AGIL_EGRESS_S3_ACCESS_KEY: "${MINIO_ROOT_USER:?set MINIO_ROOT_USER}"
+      AGIL_EGRESS_S3_SECRET_KEY: "${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}"
+      AGIL_EGRESS_S3_FORCE_PATH_STYLE: "true"
+      AGIL_EGRESS_PLAYBACK_ENABLED: "1"
+      AGIL_EGRESS_PLAYBACK_TTL_SEC: "${AGIL_EGRESS_PLAYBACK_TTL_SEC:-900}"
+    volumes:
+      - agil-data:/app/.data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  redis-data:
+  minio-data:
+  agil-data:

@@ -1,0 +1,21 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "agil-core.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agil-core.labels" . | nindent 4 }}
+spec:
+  {{- if le (int .Values.replicaCount) (int .Values.podDisruptionBudget.minAvailable) }}
+  # P3-5: with replicaCount <= minAvailable a PDB blocks every drain forever.
+  # Render maxUnavailable: 1 instead (a no-op guard at one replica) so a
+  # "HA optics" PDB cannot deadlock `kubectl drain`.
+  maxUnavailable: 1
+  {{- else }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "agil-core.selectorLabels" . | nindent 6 }}
+{{- end }}

@@ -1,0 +1,35 @@
+# AgilFrame — all-in-one quickstart (core + node + TURN + Redis).
+#
+# This file is the umbrella project. It includes two bundles so the same
+# service definitions can be reused on split hosts:
+#
+#   docker-compose.core.yml   core (signalling/REST/static) + redis
+#   docker-compose.node.yml   node enrollment loop + coturn (STUN/TURN)
+#
+# All-in-one host:  ./install.sh --start
+#   `install.sh` generates `.env` (0600), starts core + turn + redis, waits for
+#   /v1/health, mints a one-time node token, then starts node. Running plain
+#   `docker compose up -d` first is not enough: without a token the node stops
+#   with a clear error (bounded restarts, no infinite crash-loop).
+#
+# Core only:        docker compose -f docker-compose.core.yml up -d
+# Node/TURN only:   see docker-compose.node-remote.yml (remote core host)
+#
+# TLS is terminated by YOUR reverse proxy (see ../examples/). This file never
+# writes outside its own directory and does not touch host proxies/VPNs.
+#
+#   cp .env.example .env   # or run ./install.sh
+#   ./install.sh --start
+#   ./smoke.sh
+#
+# Subsets: `docker compose up -d core turn redis` (no node),
+#          `docker compose up -d core` (API only, no WebRTC relay).
+# Do not scale `core` horizontally: rooms/sockets live in one process.
+#
+# Requires Docker Compose >= 2.24 (project `include` + `!reset` override).
+
+name: agil-quickstart
+
+include:
+  - docker-compose.core.yml
+  - docker-compose.node.yml

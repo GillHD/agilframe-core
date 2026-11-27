@@ -1,0 +1,22 @@
+apiVersion: v2
+name: agil-core
+description: >-
+  AgilFrame core — signaling/REST server, demo, dashboard, visual editor and
+  admin API. Single-replica by design in 0.1.0 (room state is in-memory).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.25.0-0"
+keywords:
+  - webrtc
+  - video-calls
+  - agil
+  - signaling
+home: https://example.invalid/agil
+sources:
+  - https://example.invalid/agil
+maintainers:
+  - name: AGIL Platform Team
+annotations:
+  agil.io/component: core
+  agil.io/docs: agil/infra/README.md

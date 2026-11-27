@@ -1,0 +1,21 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "agil-node.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agil-node.labels" . | nindent 4 }}
+spec:
+  {{- if le (int .Values.replicaCount) (int .Values.podDisruptionBudget.minAvailable) }}
+  # With replicaCount <= minAvailable a PDB blocks drains until the node is
+  # manually deleted. A node is one replica by design, so render
+  # maxUnavailable: 1 (no-op guard) instead.
+  maxUnavailable: 1
+  {{- else }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "agil-node.selectorLabels" . | nindent 6 }}
+{{- end }}

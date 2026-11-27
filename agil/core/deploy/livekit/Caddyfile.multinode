@@ -1,0 +1,20 @@
+# Sample Caddy vhost for two LiveKit nodes (multi-node).
+# Copy into the shared Caddyfile, keep the global proxy_protocol listener and
+# TLS config from the existing installation.
+https://sfu.example.com:9443 {
+    bind 127.0.0.1
+    encode zstd gzip
+    reverse_proxy http://127.0.0.1:7880 http://127.0.0.1:7890 {
+        lb_policy round_robin
+        lb_try_duration 5s
+        health_uri /
+        health_interval 3s
+        health_timeout 2s
+        fail_duration 10s
+        max_fails 1
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto https
+        header_up Host {host}
+    }
+}

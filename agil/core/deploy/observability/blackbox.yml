@@ -1,0 +1,29 @@
+# AgilFrame — blackbox_exporter modules.
+#
+# Used by Prometheus jobs `agil-app-health`, `agil-egress-health`,
+# `agil-sfu-tcp`. No credentials belong here: every check is unauthenticated.
+
+modules:
+  # Expects the final URL to answer 200 directly. Redirects are intentionally
+  # not followed: a http -> https redirect means the target list points at the
+  # wrong scheme (fix the target, do not hide it). TLS certificate metrics are
+  # exposed by the prober (probe_ssl_earliest_cert_expiry) for https targets.
+  http_2xx:
+    prober: http
+    timeout: 8s
+    http:
+      valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+      valid_status_codes: [200]
+      method: GET
+      follow_redirects: false
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: true
+
+  # Plain TCP connect, used for LiveKit signalling (7880/7890) and RTC-TCP
+  # fallback (7881/7891) reachability from the monitoring network.
+  tcp_connect:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: true

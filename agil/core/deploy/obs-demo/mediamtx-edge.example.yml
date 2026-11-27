@@ -1,0 +1,27 @@
+logLevel: warn
+api: true
+apiAddress: 127.0.0.1:9997
+rtsp: false
+rtmp: false
+hls: true
+hlsAddress: :8888
+hlsVariant: fmp4
+hlsSegmentCount: 4
+hlsSegmentDuration: 2s
+webrtc: true
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :8189
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts: [view.example.com]
+srt: false
+moq: false
+authMethod: http
+authHTTPAddress: http://broker.private:8898/internal/media-auth/REPLACE_WITH_CALLBACK_KEY
+authHTTPExclude:
+  - action: api
+paths:
+  '~^obs/([A-Za-z0-9_-]{22})$':
+    source: 'rtsp://relay:REPLACE_WITH_RELAY_KEY@origin.private:8554/obs/$G1'
+    rtspTransport: tcp
+    sourceOnDemand: true
+    sourceOnDemandCloseAfter: 10s

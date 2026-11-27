@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" preserveAspectRatio="xMidYMid slice" role="img">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#cfe9ef"/>
+      <stop offset="0.55" stop-color="#eaf6f2"/>
+      <stop offset="1" stop-color="#f7fbf3"/>
+    </linearGradient>
+    <linearGradient id="hill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8fb8a6"/>
+      <stop offset="1" stop-color="#5d8777"/>
+    </linearGradient>
+    <linearGradient id="forest" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3f6d5c"/>
+      <stop offset="1" stop-color="#22463c"/>
+    </linearGradient>
+    <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9ec7c2"/>
+      <stop offset="0.35" stop-color="#5d9a96"/>
+      <stop offset="1" stop-color="#255a5c"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#sky)"/>
+  <circle cx="980" cy="150" r="72" fill="#fff7d9"/>
+  <circle cx="980" cy="150" r="126" fill="#fff7d9" opacity="0.22"/>
+  <g fill="#ffffff" opacity="0.5">
+    <ellipse cx="300" cy="150" rx="200" ry="28"/>
+    <ellipse cx="500" cy="196" rx="140" ry="20"/>
+    <ellipse cx="760" cy="120" rx="170" ry="22"/>
+  </g>
+  <path d="M0 470 L150 330 L300 452 L470 300 L660 470 L840 336 L1040 470 L1200 352 L1280 430 L1280 560 L0 560 Z" fill="url(#hill)" opacity="0.75"/>
+  <path d="M0 540 L120 440 L250 540 L360 452 L500 552 L640 458 L790 556 L940 470 L1100 560 L1220 492 L1280 540 L1280 620 L0 620 Z" fill="url(#forest)"/>
+  <g fill="#16352d">
+    <path d="M104 560 L132 480 L160 560 Z"/>
+    <path d="M170 566 L198 492 L226 566 Z"/>
+    <path d="M240 570 L264 506 L288 570 Z"/>
+    <path d="M936 566 L966 486 L996 566 Z"/>
+    <path d="M1010 570 L1036 502 L1062 570 Z"/>
+    <path d="M1080 574 L1106 512 L1132 574 Z"/>
+    <path d="M1150 576 L1174 520 L1198 576 Z"/>
+  </g>
+  <path d="M0 600 L220 566 L430 606 L650 576 L880 610 L1090 580 L1280 606 L1280 720 L0 720 Z" fill="#1b3b33"/>
+  <rect y="628" width="1280" height="92" fill="url(#water)"/>
+  <g stroke="#dff3e6" stroke-opacity="0.42" stroke-width="2">
+    <line x1="120" y1="648" x2="470" y2="648"/>
+    <line x1="600" y1="662" x2="900" y2="662"/>
+    <line x1="260" y1="682" x2="720" y2="682"/>
+    <line x1="880" y1="700" x2="1120" y2="700"/>
+  </g>
+  <path d="M0 660 L120 648 L220 664 L300 652 L410 670 L520 656 L640 674 L760 660 L880 676 L1000 662 L1120 678 L1280 664 L1280 720 L0 720 Z" fill="#0f2a25" opacity="0.55"/>
+</svg>

@@ -1,0 +1,180 @@
+# AgilFrame — LiveKit Egress worker for a DEDICATED host.
+#
+# Do NOT run this on the app VPS (1 vCPU / 2 GB). This compose file is separate
+# from the repo root app compose and from agil/core/deploy/livekit; it starts only the
+# egress worker (and optionally MinIO). It does not touch the running app.
+#
+# Quick start (on the worker host, from this directory):
+#   cp .env.example .env
+#   $EDITOR .env                       # never commit .env
+#   sh render-config.sh                # -> /etc/agil-egress/egress.yaml (0640)
+#   docker compose up -d
+#   docker compose ps
+#   node ../../scripts/egress-health.mjs --env-file .env
+#
+# Requires:
+#   - Docker Engine 24+ / Compose v2, 8 vCPU, 8 GB RAM, 100+ GB SSD
+#   - the SAME Redis as the LiveKit server that dispatches egress
+#     (private network or SSH tunnel; see agil/core/docs/egress-production.md)
+#   - outbound WSS/UDP to the SFU, HTTPS to S3/CDN, RTMP(S) to the provider
+#
+# Security notes:
+#   - host networking means ports 8080/9090/7980 bind on the host. Block them
+#     at the cloud firewall and host firewall; 8080 is health only, not Twirp.
+#   - the SFU API secret is injected from the environment, never baked into the
+#     image or committed. The rendered egress.yaml contains no API keys.
+#   - Chrome runs unsandboxed by default in egress v1.15.0; see the hardening
+#     note in agil/core/docs/egress-production.md §Security.
+#
+# Pin: livekit/egress:v1.15.0 is the version proven in agil/core/docs/egress-local-test.md
+# against LiveKit v1.13.11. Bump deliberately and re-run the smoke.
+
+name: agil-egress
+
+services:
+  egress:
+    # PINNED. For stricter supply-chain control, resolve and pin the digest:
+    #   docker inspect --format '{{index .RepoDigests 0}}' livekit/egress:v1.15.0
+    # then use livekit/egress@sha256:...
+    image: livekit/egress:v1.15.0
+    restart: unless-stopped
+    # Egress must use host networking: Chrome/GStreamer need the host's network
+    # for ICE/media and the worker is addressed through Redis, not a port.
+    network_mode: host
+    shm_size: "1gb"
+    # 8 vCPU / 8 GB for one 720p multi-output composite (measured 5.41 cores,
+    # 1.95 GB). Override to 4.0/4g only for single-output jobs and also lower
+    # room_composite_cpu_cost in egress.yaml (see docs §Capacity).
+    cpus: "${EGRESS_CPUS:-8.0}"
+    mem_limit: "${EGRESS_MEM_LIMIT:-8g}"
+    mem_reservation: "2g"
+    pids_limit: 4096
+    # Give egress time to finalize MP4/EOS on `docker compose stop`.
+    stop_grace_period: 180s
+    # Required by the lab for Chrome/GStreamer on egress v1.15.0. This is a
+    # privileged container on a dedicated host; do not co-locate other
+    # workloads. See §Security before changing.
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=unconfined
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    environment:
+      # Reads the rendered YAML. api_key/api_secret are supplied ONLY here.
+      EGRESS_CONFIG_FILE: /etc/agil-egress/egress.yaml
+      LIVEKIT_API_KEY: "${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY in .env (same as the SFU key)}"
+      LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env (same as the SFU secret)}"
+      # S3 credentials for egress's AWS SDK default chain. Leave empty to use
+      # an instance role / workload identity instead. These values are never
+      # written to egress.yaml and never logged by this compose file.
+      AWS_ACCESS_KEY_ID: "${EGRESS_S3_ACCESS_KEY:-}"
+      AWS_SECRET_ACCESS_KEY: "${EGRESS_S3_SECRET_KEY:-}"
+      AWS_DEFAULT_REGION: "${EGRESS_S3_REGION:-ru-msk}"
+    volumes:
+      # Rendered 0640 config, root-owned, outside the repo. Group read is needed
+      # because egress runs as UID 1001 with primary group root. The file has no
+      # API keys (those come from LIVEKIT_* env above).
+      - type: bind
+        source: "${EGRESS_CONFIG_FILE:-/etc/agil-egress/egress.yaml}"
+        target: /etc/agil-egress/egress.yaml
+        read_only: true
+      # Local fallback/backup and optional file output. Egress runs as an
+      # unprivileged user (UID 1001); the host directory must be writable:
+      #   install -d -o 1001 -g 1001 -m 750 /srv/agil-egress/out
+      - type: bind
+        source: "${EGRESS_OUT_DIR:-/srv/agil-egress/out}"
+        target: /out
+    healthcheck:
+      # egress serves a JSON status on health_port; this is NOT the Twirp API.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # OPTIONAL self-hosted S3-compatible storage for a lab/offline deployment.
+  # It is NOT started by default. For production prefer a managed S3 in the
+  # required jurisdiction (152-ФЗ) or your own MinIO/Ceph cluster.
+  #
+  # MinIO stopped publishing community Docker images in late 2025; these are
+  # the last AGPLv3 community tags with a console. Mirror them to your own
+  # registry, verify licenses/CVEs, or replace this profile with an external
+  # endpoint. See agil/core/docs/egress-production.md §Storage.
+  #
+  # Start: docker compose --profile minio up -d
+  # Console: ssh -L 9001:127.0.0.1:9001 root@worker  -> http://127.0.0.1:9001
+  minio:
+    profiles: ["minio"]
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-agil-egress}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-}"
+    ports:
+      # Loopback only: egress uses host networking and reaches 127.0.0.1:9000.
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      # MinIO publishes a liveness endpoint; the official image ships curl.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  # One-shot bucket bootstrap for the optional MinIO profile. It waits for the
+  # API, creates the bucket, leaves it private, and applies an optional object
+  # expiry rule. Safe to re-run.
+  minio-init:
+    profiles: ["minio"]
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-agil-egress}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-}"
+      EGRESS_S3_BUCKET: "${EGRESS_S3_BUCKET:-agil-recordings}"
+      MINIO_RETENTION_DAYS: "${MINIO_RETENTION_DAYS:-30}"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        [ -n "$${MINIO_ROOT_PASSWORD:-}" ] || { echo "set MINIO_ROOT_PASSWORD in .env for the minio profile" >&2; exit 1; }
+        attempts=0
+        until mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
+          attempts=$$((attempts + 1))
+          if [ "$$attempts" -ge 30 ]; then
+            echo "minio not reachable after 30 attempts; check the minio service and MINIO_ROOT_USER/MINIO_ROOT_PASSWORD" >&2
+            exit 1
+          fi
+          echo "waiting for minio ($$attempts/30)..."
+          sleep 2
+        done
+        mc mb --ignore-existing "local/$$EGRESS_S3_BUCKET"
+        mc anonymous set none "local/$$EGRESS_S3_BUCKET"
+        if [ -n "$${MINIO_RETENTION_DAYS:-}" ] && [ "$$MINIO_RETENTION_DAYS" != "0" ]; then
+          mc ilm rule rm --all --force "local/$$EGRESS_S3_BUCKET" >/dev/null 2>&1 || true
+          mc ilm rule add --expire-days "$$MINIO_RETENTION_DAYS" "local/$$EGRESS_S3_BUCKET"
+        fi
+        echo "bucket ready: $$EGRESS_S3_BUCKET (private; retention=$${MINIO_RETENTION_DAYS:-off}d)"
+
+volumes:
+  minio-data:

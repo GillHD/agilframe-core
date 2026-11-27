@@ -1,0 +1,178 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agil-node.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agil-node.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  strategy:
+    {{- toYaml .Values.deploymentStrategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "agil-node.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agil-node.selectorLabels" . | nindent 8 }}
+        agil.io/node-role: {{ .Values.node.role | quote }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/loop: {{ include (print $.Template.BasePath "/configmap-loop.yaml") . | sha256sum }}
+        {{- if or .Values.redis.url .Values.postgres.url }}
+        checksum/media: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "agil-node.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      enableServiceLinks: {{ .Values.enableServiceLinks }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: node
+          image: {{ include "agil-node.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - /opt/agil/node-loop.sh
+          env:
+            - name: AGIL_CORE_URL
+              value: {{ .Values.core.url | quote }}
+            - name: AGIL_NODE_STATE_DIR
+              value: {{ .Values.persistence.mountPath | quote }}
+            - name: AGIL_CLI_PATH
+              value: agil/core/scripts/agil-cli.mjs
+            - name: AGIL_NODE_ID
+              value: {{ include "agil-node.nodeId" . | quote }}
+            - name: AGIL_NODE_NAME
+              value: {{ include "agil-node.nodeName" . | quote }}
+            - name: AGIL_NODE_ROLE
+              value: {{ .Values.node.role | quote }}
+            - name: AGIL_NODE_FEATURES
+              value: {{ join "," .Values.node.features | quote }}
+            - name: AGIL_NODE_REGION
+              value: {{ .Values.node.region | quote }}
+            - name: AGIL_NODE_ENDPOINT
+              value: {{ include "agil-node.endpoint" . | quote }}
+            - name: AGIL_NODE_HEARTBEAT_SEC
+              value: {{ .Values.node.heartbeatIntervalSec | quote }}
+            {{- with .Values.node.capacity }}
+            - name: AGIL_NODE_CAPACITY
+              value: {{ toJson . | quote }}
+            {{- end }}
+            {{- if .Values.enrollment.existingSecret }}
+            - name: AGIL_NODE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.enrollment.existingSecret }}
+                  key: {{ .Values.enrollment.tokenKey }}
+                  optional: true
+            {{- else if .Values.enrollment.token }}
+            - name: AGIL_NODE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agil-node.fullname" . }}
+                  key: {{ .Values.enrollment.tokenKey }}
+            {{- end }}
+            {{- if or .Values.enrollment.nodeKey .Values.enrollment.nodeKeySecret }}
+            - name: AGIL_NODE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agil-node.nodeKeySecretName" . }}
+                  key: {{ .Values.enrollment.nodeKeyKey }}
+                  optional: true
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.probes.startup.enabled }}
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - test -s "$AGIL_NODE_STATE_DIR/node.json"
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+          {{- end }}
+          {{- if .Values.probes.liveness.enabled }}
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - test -s "$AGIL_NODE_STATE_DIR/node.json"
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- if .Values.probes.readiness.enabled }}
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - >-
+                  now=$(date +%s); last=$(cat "$AGIL_NODE_STATE_DIR/heartbeat-at" 2>/dev/null || echo 0);
+                  [ $((now - last)) -lt 90 ]
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: loop
+              mountPath: /opt/agil
+              readOnly: true
+            - name: state
+              mountPath: {{ .Values.persistence.mountPath }}
+      volumes:
+        - name: loop
+          configMap:
+            name: {{ include "agil-node.fullname" . }}-loop
+            defaultMode: 0555
+        - name: state
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (include "agil-node.fullname" .) }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

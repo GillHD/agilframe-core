@@ -1,0 +1,21 @@
+{
+  "name": "@agil/mcp",
+  "version": "0.1.0",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AgilFrame MCP server: lets AI agents inspect, validate and improve call embeds/designs",
+  "main": "./dist/index.js",
+  "bin": {
+    "agil-calls-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "dev:http": "tsx src/http.ts",
+    "start": "node dist/index.js",
+    "start:http": "node dist/http.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test \"test/*.test.ts\""
+  }
+}

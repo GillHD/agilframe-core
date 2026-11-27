@@ -1,0 +1,26 @@
+# AgilFrame — remote-node override (no local core/redis).
+#
+# Use this on a node/TURN host that registers with a core somewhere else (the
+# AWS reference topology: core VM + node VM, or any split deployment):
+#
+#   cp node.env.example .env
+#   # fill AGIL_CORE_URL, AGIL_NODE_TOKEN, TURN_PASSWORD, TURN_EXTERNAL_IP
+#   docker compose -f docker-compose.node.yml -f docker-compose.node-remote.yml up -d
+#
+# Why an override: docker-compose.node.yml waits for the local `core` service in
+# the all-in-one project. On a node-only host there is no local core, so this
+# file drops that dependency and makes AGIL_CORE_URL mandatory (a silent
+# fallback to http://core:8787 would enroll the node with nothing / the wrong
+# core).
+#
+# This file intentionally does NOT contain core secrets.
+
+services:
+  node:
+    # Compose tag: remove the inherited local-core dependency.
+    depends_on: !reset []
+    environment:
+      # Required: core private URL within the VPC, or the public HTTPS origin.
+      # Enrollment tokens and node keys are bearer secrets; use https:// for
+      # anything crossing the internet.
+      AGIL_CORE_URL: ${AGIL_CORE_URL:?set AGIL_CORE_URL to the core origin (e.g. https://calls.example.com or http://10.40.10.12:8787)}

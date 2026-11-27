@@ -1,0 +1,54 @@
+# LiveKit Egress configuration TEMPLATE (S3/S4 — recording, RTMP, HLS).
+#
+# This is NOT used by the default docker-compose.yml service: egress there is
+# configured from EGRESS_CONFIG_BODY with values injected from the environment,
+# so no secret ever has to be written to disk. This file is a reference for
+# operators who prefer a mounted config file.
+#
+# Usage with a file:
+#   1. Copy to a path outside the repo (e.g. /opt/agil-sfu/egress.yaml).
+#   2. Replace <...> placeholders / export the values.
+#   3. Mount it read-only and set EGRESS_CONFIG_FILE=/etc/egress.yaml.
+#
+# Never commit a filled copy. `.env`/config files with secrets are gitignored.
+#
+# Requirements: >= 4 GB RAM per concurrent recorder, Chrome sandbox privileges
+# (CAP_SYS_ADMIN + seccomp unconfined in the compose service), host networking,
+# outbound access to S3/RTMP endpoints.
+#
+# Docs: https://docs.livekit.io/home/egress/overview/
+
+# API key of the LiveKit server (same value as LIVEKIT_API_KEY).
+api_key: <LIVEKIT_API_KEY>
+api_secret: <LIVEKIT_API_SECRET>
+
+# Signaling endpoint, reachable from the egress container.
+ws_url: ws://127.0.0.1:7880
+
+# Job queue / state. Required for retries and multiple egress instances.
+redis:
+  address: 127.0.0.1:6380
+
+# Optional: local file output is chosen per request (pass a container path that
+# is backed by a mounted volume, e.g. /out). There is no global file output key.
+
+# --- S3 / MinIO destination (RU-hosted storage for 152-ФЗ) ------------------
+# Egress config nests storage under `storage:`. Only one storage backend can be
+# configured per service (it can be overridden per request).
+# storage:
+#   s3:
+#     access_key: <S3_ACCESS_KEY>
+#     secret: <S3_SECRET_KEY>
+#     region: <S3_REGION>            # e.g. ru-msk
+#     bucket: <S3_BUCKET>            # e.g. agil-recordings
+#     endpoint: <S3_ENDPOINT>        # e.g. https://s3.example.com
+#     force_path_style: true          # needed for MinIO / some S3 clones
+
+# --- Optional: RTMP push to YouTube/VK and HLS segments --------------------
+# Egress targets are chosen per-request via the LiveKit Egress API
+# (`StartRoomCompositeEgress`), not globally here. This block only holds
+# defaults/storage shared by all requests.
+#
+# logging:
+#   level: info
+# health_port: 8080     # internal health endpoint; do not expose publicly

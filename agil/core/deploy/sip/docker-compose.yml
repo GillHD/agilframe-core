@@ -1,0 +1,153 @@
+# AgilFrame — local SIP/PSTN lab (LiveKit SIP + Asterisk), NOT production.
+#
+# This stack replaces a real carrier with one Asterisk container that acts as
+# both the test trunk (PSTN side) and the "phone" (inbound leg). No DID, no
+# carrier account, no paid PSTN traffic: every call stays on the host / WSL2
+# network. See agil/core/docs/sip-local-lab.md for the full runbook and for the
+# list of things this lab cannot prove (real PSTN codecs, carrier auth, DID
+# routing, STIR/SHAKEN, emergency calls, ...).
+#
+#   cp .env.example .env            # lab keys (not production secrets)
+#   docker compose up -d
+#   ./scripts/lab-up.sh             # optional wrapper: up + wait for readiness
+#   node scripts/lab-init.mjs       # create the outbound/inbound trunks
+#   docker compose down             # stop; recordings stay in ./recordings
+#
+# Network model: host networking for every service. This is deliberate — the
+# LiveKit SIP service must advertise a reachable SDP/RTP address and Asterisk
+# must reach it without Docker NAT, exactly like the upstream LiveKit SIP
+# sample compose. Host networking means Linux (or a WSL2 distro running
+# Docker Engine), not Docker Desktop's Windows engine; see the runbook.
+#
+# Ports (all bound on the Docker host / WSL2, loopback + LAN):
+#   7880/tcp        LiveKit HTTP/WS + Twirp API (AGIL_SIP_URL)
+#   7881/tcp        LiveKit RTC/TCP fallback
+#   50100-50200/udp LiveKit RTC media (unused by the audio-only SIP lab)
+#   5070/udp        LiveKit SIP signaling (Asterisk trunk points here)
+#   28083/tcp       LiveKit SIP worker health (lab host probe)
+#   10000-10100/udp LiveKit SIP RTP
+#   5060/udp        Asterisk PJSIP (LiveKit outbound trunk points here)
+#   16000-16100/udp Asterisk RTP
+#   5038/tcp        Asterisk AMI (lab scripts drive the inbound leg here)
+#   6385/tcp        Redis (LiveKit room directory / SIP state)
+
+name: agil-sip-lab
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    network_mode: host
+    # Non-default port so the lab cannot collide with a real Redis on 6379.
+    command: ["redis-server", "--port", "6385", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6385", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  livekit:
+    # Same pin as agil/core/deploy/livekit/docker-compose.yml so the lab
+    # exercises the version the product actually ships with.
+    image: livekit/livekit-server:v1.13.11
+    restart: unless-stopped
+    network_mode: host
+    command: ["--config", "/etc/livekit.yaml"]
+    environment:
+      # Format "<api-key>: <api-secret>". Keys are injected from .env, never
+      # written into livekit.yaml.
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY in .env}: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env}"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    healthcheck:
+      # livekit-server ships no shell utilities; use its own binary as the
+      # readiness probe (`--help` proves the process/config loaded).
+      test: ["CMD", "/livekit-server", "--help"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  sip:
+    # LiveKit SIP worker: SIP signaling + RTP <-> WebRTC bridge. The Twirp
+    # control API itself is served by livekit-server on :7880 (that is what
+    # AGIL_SIP_URL points at).
+    image: livekit/sip:v1.24
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      SIP_CONFIG_BODY: |
+        api_key: '${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY in .env}'
+        api_secret: '${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env}'
+        ws_url: 'ws://127.0.0.1:7880'
+        redis:
+          address: '127.0.0.1:6385'
+        sip_port: 5070
+        health_port: 28083
+        rtp_port: 10000-10100
+        # No STUN in the lab: all SIP/RTP peers are on the same host.
+        use_external_ip: false
+        # Keep SDP reachable from the loopback Asterisk peer even on a host
+        # with virtual interfaces, such as WSL's DNS proxy address.
+        media_nat_1_to_1_ip: '127.0.0.1'
+        # G.711 only, matching Asterisk's allow=ulaw,alaw.
+        codecs:
+          PCMU: true
+          PCMA: true
+        logging:
+          level: debug
+    depends_on:
+      livekit:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  asterisk:
+    # Test trunk + test "phone". The image ships Asterisk 20 with PJSIP and the
+    # core sound prompts (hello-world, demo-congrats) used to prove audio.
+    image: andrius/asterisk:20.7-cert12_debian-trixie
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./asterisk/pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ./asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./asterisk/rtp.conf:/etc/asterisk/rtp.conf:ro
+      - ./asterisk/manager.conf:/etc/asterisk/manager.conf:ro
+      - ./asterisk/logger.conf:/etc/asterisk/logger.conf:ro
+      - ./asterisk/modules.conf:/etc/asterisk/modules.conf:ro
+      # Generated tone prompts (scripts/gen-tones.mjs): the image ships no
+      # sound files, so Playback(agil-tone-a/b/beep) needs this directory.
+      - ./asterisk/sounds:/var/lib/asterisk/sounds/en:ro
+      - ./recordings:/var/spool/asterisk/monitor
+      - ./logs/asterisk:/var/log/asterisk
+    depends_on:
+      sip:
+        condition: service_started
+    healthcheck:
+      # `asterisk -rx` needs the daemon's control socket; the image runs the
+      # CLI already. A successful `core show uptime` means config loaded.
+      test: ["CMD-SHELL", "asterisk -rx 'core show uptime' >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    stop_grace_period: 10s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }

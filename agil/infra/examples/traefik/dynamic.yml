@@ -1,0 +1,107 @@
+# AgilFrame — Traefik v3 dynamic configuration sample.
+#
+# TEMPLATE only. Point Traefik at this file with the file provider, e.g. in
+# traefik.yml:
+#
+#   providers:
+#     file:
+#       directory: /etc/traefik/dynamic
+#       watch: true
+#   entryPoints:
+#     web:      { address: ":80" }
+#     websecure:{ address: ":443" }
+#   certificatesResolvers:
+#     letsencrypt:
+#       acme:
+#         email: admin@example.com
+#         storage: /etc/traefik/acme.json
+#         httpChallenge: { entryPoint: web }
+#
+# Replace the hostname, then `traefik check` is not a thing: restart Traefik and
+# watch its log for "error while parsing configuration".
+#
+# WebSockets work through Traefik without extra middleware; the
+# forwardingTimeouts below keep idle call sockets alive.
+
+http:
+  routers:
+    agil-core-http:
+      rule: Host(`calls.example.com`)
+      entryPoints:
+        - web
+      middlewares:
+        - agil-https-redirect
+      service: agil-core
+
+    agil-core:
+      rule: Host(`calls.example.com`)
+      entryPoints:
+        - websecure
+      service: agil-core
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - agil-headers
+        # - agil-docs-allowlist
+
+    # Optional: LiveKit SFU vhost on the same Traefik.
+    # agil-sfu:
+    #   rule: Host(`sfu.example.com`)
+    #   entryPoints: [websecure]
+    #   service: agil-sfu
+    #   tls: { certResolver: letsencrypt }
+
+  middlewares:
+    agil-https-redirect:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
+    agil-headers:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        contentTypeNosniff: true
+        referrerPolicy: strict-origin-when-cross-origin
+        customFrameOptionsValue: SAMEORIGIN
+        customRequestHeaders:
+          X-Forwarded-Proto: https
+
+    # Keep docs/OpenAPI internal. Requires the public IPs to be in the CIDRs.
+    # agil-docs-allowlist:
+    #   ipAllowList:
+    #     sourceRange:
+    #       - 10.0.0.0/8
+    #       - 192.168.0.0/16
+
+  services:
+    agil-core:
+      loadBalancer:
+        servers:
+          - url: http://127.0.0.1:8787
+        passHostHeader: true
+        serversTransport: agil-core-transport
+        healthCheck:
+          path: /v1/health
+          interval: 10s
+          timeout: 3s
+
+    # agil-sfu:
+    #   loadBalancer:
+    #     servers:
+    #       - url: http://127.0.0.1:7880
+    #     passHostHeader: true
+    #     serversTransport: agil-sfu-transport
+
+  serversTransports:
+    agil-core-transport:
+      forwardingTimeouts:
+        dialTimeout: 10s
+        responseHeaderTimeout: 0s
+        idleConnTimeout: 3600s
+      # Uploads: Traefik buffers/streams; enforce body limits at the app or a WAF.
+    # agil-sfu-transport:
+    #   forwardingTimeouts:
+    #     dialTimeout: 10s
+    #     responseHeaderTimeout: 0s
+    #     idleConnTimeout: 3600s

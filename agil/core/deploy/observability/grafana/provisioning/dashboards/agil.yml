@@ -1,0 +1,14 @@
+# Grafana dashboard provisioning for the optional AgilFrame observability stack.
+
+apiVersion: 1
+
+providers:
+  - name: agil-calls
+    orgId: 1
+    folder: AgilFrame
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

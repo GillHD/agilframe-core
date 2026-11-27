@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agil-core.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agil-core.labels" . | nindent 4 }}
+data:
+  NODE_ENV: "production"
+  PORT: "8787"
+  AGIL_DATA_DIR: {{ ternary .Values.persistence.mountPath "/app/.data" .Values.persistence.enabled | quote }}
+  AGIL_PUBLIC_ORIGIN: {{ include "agil-core.publicOrigin" . | quote }}
+  AGIL_DEFAULT_TENANT: {{ .Values.defaultTenant | quote }}
+  AGIL_TRUST_PROXY: {{ ternary "1" "0" .Values.trustProxy | quote }}
+  AGIL_ALLOW_ANONYMOUS: {{ ternary "1" "0" .Values.allowAnonymous | quote }}
+  AGIL_DOCS_ENABLED: {{ ternary "1" "0" .Values.features.docs | quote }}
+  AGIL_ADMIN_API_ENABLED: {{ ternary "1" "0" .Values.features.adminApi | quote }}
+  AGIL_MCP_HTTP_ENABLED: {{ ternary "1" "0" .Values.features.mcpHttp | quote }}
+  AGIL_SIP_ENABLED: {{ ternary "1" "0" .Values.features.sip | quote }}
+  AGIL_EGRESS_ENABLED: {{ ternary "1" "0" .Values.features.egress | quote }}
+  AGIL_SFU_ENABLED: {{ ternary "1" "0" .Values.features.sfu | quote }}
+  AGIL_GEO_PROVIDER: {{ .Values.geoProvider | default "header" | quote }}
+  AGIL_GEO_HEADER_ALLOW: {{ ternary "1" "0" .Values.geoHeaderAllow | quote }}
+  {{- with .Values.iceServers }}
+  AGIL_ICE_SERVERS: {{ toJson . | quote }}
+  {{- end }}
+  {{- with .Values.docsAllowIps }}
+  AGIL_DOCS_ALLOW_IPS: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.adminAllowIps }}
+  AGIL_ADMIN_ALLOW_IPS: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.mcpHttpAllowIps }}
+  AGIL_MCP_HTTP_ALLOW_IPS: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.sfuUrl }}
+  AGIL_SFU_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.sipUrl }}
+  AGIL_SIP_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.egressUrl }}
+  AGIL_EGRESS_URL: {{ . | quote }}
+  {{- end }}

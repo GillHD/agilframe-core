@@ -1,0 +1,23 @@
+apiVersion: v2
+name: agil-node
+description: >-
+  AgilFrame node — enrollment/heartbeat loop that registers a media or TURN
+  node with AGIL Core using the standard agil-calls image and the first-party
+  agil-cli. It does not run LiveKit, coturn or any media process.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.25.0-0"
+keywords:
+  - webrtc
+  - agil
+  - node
+  - enrollment
+home: https://example.invalid/agil
+sources:
+  - https://example.invalid/agil
+maintainers:
+  - name: AGIL Platform Team
+annotations:
+  agil.io/component: node
+  agil.io/docs: agil/infra/README.md

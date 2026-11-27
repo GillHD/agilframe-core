@@ -1,0 +1,120 @@
+# AgilFrame — core + redis bundle (included by docker-compose.yml).
+#
+# Can also be started alone on a signalling-only host:
+#   docker compose -f docker-compose.core.yml up -d
+#
+# SECURITY — read before editing:
+#   * core is the internet-facing app through your reverse proxy, so it gets an
+#     explicit `environment:` list only. Do NOT add `env_file: .env` here: that
+#     would hand TURN_PASSWORD and AGIL_NODE_TOKEN/AGIL_NODE_KEY to the public
+#     service (any env dump / support bundle / `docker inspect` would leak the
+#     relay credential and a node enrollment secret).
+#   * every app secret core needs is interpolated below from `.env`.
+#   * extra, non-secret core settings can be appended to `environment:` or passed
+#     with a compose override; keep node/TURN secrets out of this service.
+
+name: agil-quickstart
+
+x-logging: &agil-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-hardening: &agil-hardening
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  core:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+    image: ${AGIL_CORE_IMAGE:-agil-calls:0.1.0}
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      PORT: "8787"
+      AGIL_DATA_DIR: /app/.data
+      # --- identity / URLs ---
+      AGIL_PUBLIC_ORIGIN: ${AGIL_PUBLIC_ORIGIN:?set AGIL_PUBLIC_ORIGIN in .env — run ./install.sh}
+      AGIL_TRUST_PROXY: ${AGIL_TRUST_PROXY:-1}
+      AGIL_DEFAULT_TENANT: ${AGIL_DEFAULT_TENANT:-demo}
+      # --- app secrets (core only; never node/TURN credentials) ---
+      AGIL_TOKEN_SECRET: ${AGIL_TOKEN_SECRET:?set AGIL_TOKEN_SECRET in .env — run ./install.sh}
+      AGIL_API_KEYS: ${AGIL_API_KEYS:?set AGIL_API_KEYS in .env — run ./install.sh}
+      AGIL_IP_SALT: ${AGIL_IP_SALT:?set AGIL_IP_SALT in .env — run ./install.sh}
+      AGIL_CHAT_POSTGRES_URL: ${AGIL_CHAT_POSTGRES_URL:-}
+      # --- rooms / ICE ---
+      AGIL_ALLOW_ANONYMOUS: ${AGIL_ALLOW_ANONYMOUS:-0}
+      AGIL_ICE_SERVERS: ${AGIL_ICE_SERVERS:?set AGIL_ICE_SERVERS in .env — run ./install.sh}
+      AGIL_COTURN_REST_SECRETS: ${AGIL_COTURN_REST_SECRETS:-}
+      AGIL_COTURN_AUTO_SECRETS: ${AGIL_COTURN_AUTO_SECRETS:-}
+      AGIL_COTURN_REST_TTL_SEC: ${AGIL_COTURN_REST_TTL_SEC:-3600}
+      AGIL_ICE_TCP_FALLBACK: ${AGIL_ICE_TCP_FALLBACK:-1}
+      # --- exposure / optional media plane ---
+      AGIL_DOCS_ENABLED: ${AGIL_DOCS_ENABLED:-1}
+      AGIL_ADMIN_API_ENABLED: ${AGIL_ADMIN_API_ENABLED:-1}
+      AGIL_MCP_HTTP_ENABLED: ${AGIL_MCP_HTTP_ENABLED:-0}
+      AGIL_CLUSTER_ID: ${AGIL_CLUSTER_ID:-}
+      AGIL_CLUSTER_ROLE: ${AGIL_CLUSTER_ROLE:-}
+      AGIL_GEO_PROVIDER: ${AGIL_GEO_PROVIDER:-header}
+      AGIL_GEO_HEADER_ALLOW: ${AGIL_GEO_HEADER_ALLOW:-1}
+      AGIL_SFU_ENABLED: ${AGIL_SFU_ENABLED:-0}
+      AGIL_SFU_URL: ${AGIL_SFU_URL:-}
+      AGIL_SFU_CONTROL_URL: ${AGIL_SFU_CONTROL_URL:-}
+      AGIL_SFU_API_KEY: ${AGIL_SFU_API_KEY:-}
+      AGIL_SFU_API_SECRET: ${AGIL_SFU_API_SECRET:-}
+    ports:
+      # Loopback by default: the reverse proxy on the same host is the only
+      # public entry point. Set AGIL_BIND_ADDR=0.0.0.0 only with a firewall.
+      - "${AGIL_BIND_ADDR:-127.0.0.1}:${AGIL_HTTP_PORT:-8787}:8787"
+    volumes:
+      - agil-data:/app/.data
+    <<: *agil-hardening
+    cap_drop:
+      - ALL
+    logging: *agil-logging
+    stop_grace_period: 20s
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8787/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - "--appendonly"
+      - "yes"
+      - "--save"
+      - "900"
+      - "1"
+      - "--maxmemory-policy"
+      - "noeviction"
+    volumes:
+      - redis-data:/data
+    expose:
+      - "6379"
+    <<: *agil-hardening
+    cap_drop:
+      - ALL
+    logging: *agil-logging
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  agil-data:
+  redis-data:

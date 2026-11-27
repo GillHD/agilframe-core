@@ -1,0 +1,59 @@
+services:
+  media:
+    image: bluenviron/mediamtx:1.21.4
+    restart: unless-stopped
+    environment:
+      MTX_AUTHHTTPADDRESS: http://broker:8898/internal/media-auth/${AGIL_OBS_CALLBACK_KEY:?set callback key}
+      MTX_WEBRTCADDITIONALHOSTS: ${AGIL_OBS_ICE_HOST:?set public WebRTC hostname or address}
+      MTX_RTSP: ${AGIL_OBS_RELAY_ENABLED:-false}
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+      - ${AGIL_OBS_CERT_DIR:?set certificate directory}:/certs:ro
+      - recordings:/recordings
+    ports:
+      - '1936:1936/tcp'
+      - '8189:8189/udp'
+      - '${AGIL_OBS_RELAY_BIND:-127.0.0.1}:8554:8554/tcp'
+
+  broker:
+    image: node:24-alpine
+    restart: unless-stopped
+    depends_on: [media]
+    command: ['node', '/app/server.mjs']
+    environment:
+      AGIL_OBS_HOST: 0.0.0.0
+      AGIL_OBS_SITE_ORIGIN: ${AGIL_OBS_SITE_ORIGIN:?set site origin}
+      AGIL_OBS_PUBLIC_URL: ${AGIL_OBS_PUBLIC_URL:?set public HTTPS origin}
+      AGIL_OBS_INGEST_URL: ${AGIL_OBS_INGEST_URL:?set RTMPS server ending in /obs}
+      AGIL_OBS_MTX_CONTROL_URL: http://media:9997
+      AGIL_OBS_MTX_HLS_URL: http://media:8888
+      AGIL_OBS_MTX_WEBRTC_URL: http://media:8889
+      AGIL_OBS_MTX_PLAYBACK_URL: http://media:9996
+      AGIL_OBS_REPLAY_DIR: /state/replays
+      AGIL_OBS_CHAT_FILE: ${AGIL_OBS_CHAT_FILE:-/state/chat/comments.sqlite}
+      AGIL_OBS_CHAT_LIMIT: ${AGIL_OBS_CHAT_LIMIT:-100000}
+      AGIL_OBS_CHAT_TRUSTED_PROXIES: ${AGIL_OBS_CHAT_TRUSTED_PROXIES:-}
+      AGIL_OBS_CHAT_SOURCE_PER_MINUTE: ${AGIL_OBS_CHAT_SOURCE_PER_MINUTE:-12}
+      AGIL_OBS_CHAT_STREAM_PER_SECOND: ${AGIL_OBS_CHAT_STREAM_PER_SECOND:-100}
+      AGIL_OBS_TURNSTILE_SITE_KEY: ${AGIL_OBS_TURNSTILE_SITE_KEY:-}
+      AGIL_OBS_TURNSTILE_SECRET_KEY: ${AGIL_OBS_TURNSTILE_SECRET_KEY:-}
+      AGIL_OBS_ORGANIZER_KEY: ${AGIL_OBS_ORGANIZER_KEY:?set organizer key}
+      AGIL_OBS_CALLBACK_KEY: ${AGIL_OBS_CALLBACK_KEY:?set callback key}
+      AGIL_OBS_RELAY_KEY: ${AGIL_OBS_RELAY_KEY:-}
+      AGIL_OBS_EDGES: ${AGIL_OBS_EDGES:-[]}
+      AGIL_OBS_EDGE_ROUTING: ${AGIL_OBS_EDGE_ROUTING:-balanced}
+      AGIL_OBS_TTL_MS: ${AGIL_OBS_TTL_MS:-1800000}
+      AGIL_OBS_MAX_SESSIONS: ${AGIL_OBS_MAX_SESSIONS:-3}
+    volumes:
+      - ./server.mjs:/app/server.mjs:ro
+      - ./broadcast-state.mjs:/app/broadcast-state.mjs:ro
+      - ./broadcast-chat.mjs:/app/broadcast-chat.mjs:ro
+      - ./chat-captcha.mjs:/app/chat-captcha.mjs:ro
+      - ./chat-moderation.mjs:/app/chat-moderation.mjs:ro
+      - broker-state:/state
+    ports:
+      - '${AGIL_OBS_BROKER_BIND:-127.0.0.1}:18898:8898'
+
+volumes:
+  recordings:
+  broker-state:

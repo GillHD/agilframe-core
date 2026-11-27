@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" preserveAspectRatio="xMidYMid slice" role="img">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#040d1c"/>
+      <stop offset="0.45" stop-color="#0a2038"/>
+      <stop offset="0.75" stop-color="#123b4a"/>
+      <stop offset="1" stop-color="#1d5560"/>
+    </linearGradient>
+    <linearGradient id="aur1" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#34d399" stop-opacity="0"/>
+      <stop offset="0.3" stop-color="#34d399" stop-opacity="0.85"/>
+      <stop offset="0.65" stop-color="#22d3ee" stop-opacity="0.7"/>
+      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="aur2" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#a78bfa" stop-opacity="0"/>
+      <stop offset="0.45" stop-color="#a78bfa" stop-opacity="0.6"/>
+      <stop offset="0.8" stop-color="#818cf8" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#818cf8" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="snow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#dbeafe"/>
+      <stop offset="0.4" stop-color="#a7c4e0"/>
+      <stop offset="1" stop-color="#5b80a3"/>
+    </linearGradient>
+    <linearGradient id="snowFar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c7dcf2"/>
+      <stop offset="1" stop-color="#7e9dbf"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#sky)"/>
+  <g fill="#e8f3ff">
+    <circle cx="120" cy="90" r="2" opacity="0.9"/>
+    <circle cx="250" cy="150" r="1.6" opacity="0.7"/>
+    <circle cx="360" cy="70" r="2.2" opacity="0.85"/>
+    <circle cx="470" cy="182" r="1.4" opacity="0.6"/>
+    <circle cx="590" cy="104" r="2" opacity="0.8"/>
+    <circle cx="700" cy="60" r="1.5" opacity="0.7"/>
+    <circle cx="820" cy="140" r="2" opacity="0.85"/>
+    <circle cx="950" cy="86" r="1.6" opacity="0.65"/>
+    <circle cx="1080" cy="168" r="2.2" opacity="0.8"/>
+    <circle cx="1180" cy="70" r="1.5" opacity="0.7"/>
+    <circle cx="640" cy="210" r="1.4" opacity="0.55"/>
+    <circle cx="1040" cy="250" r="1.5" opacity="0.5"/>
+  </g>
+  <g fill="none" stroke="url(#aur1)" stroke-width="46" stroke-linecap="round" opacity="0.75">
+    <path d="M-40 260 C220 130 380 300 620 200 C820 118 1000 260 1320 170"/>
+  </g>
+  <g fill="none" stroke="url(#aur2)" stroke-width="30" stroke-linecap="round" opacity="0.6">
+    <path d="M-40 330 C240 220 420 360 660 280 C880 206 1060 330 1320 250"/>
+  </g>
+  <path d="M0 470 L140 392 L280 460 L430 360 L590 470 L740 392 L900 470 L1050 380 L1200 460 L1280 420 L1280 610 L0 610 Z" fill="url(#snowFar)" opacity="0.85"/>
+  <path d="M0 560 L170 470 L360 566 L560 466 L780 572 L980 486 L1180 570 L1280 530 L1280 720 L0 720 Z" fill="url(#snow)"/>
+  <g fill="#eef7ff" opacity="0.55">
+    <path d="M0 620 L220 596 L430 626 L640 600 L860 630 L1080 604 L1280 628 L1280 720 L0 720 Z"/>
+  </g>
+</svg>

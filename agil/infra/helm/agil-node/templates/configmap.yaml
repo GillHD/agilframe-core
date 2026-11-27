@@ -1,0 +1,20 @@
+{{- if or .Values.redis.url .Values.postgres.url }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agil-node.fullname" . }}-media
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agil-node.labels" . | nindent 4 }}
+  annotations:
+    agil.io/purpose: >-
+      Connection details for the media process this node fronts (LiveKit/egress).
+      The node loop does not read this ConfigMap.
+data:
+  {{- with .Values.redis.url }}
+  REDIS_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.postgres.url }}
+  POSTGRES_URL: {{ . | quote }}
+  {{- end }}
+{{- end }}

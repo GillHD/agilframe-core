@@ -1,0 +1,59 @@
+rule_files:
+  - agil-alerts.yml
+evaluation_interval: 30s
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'up{job="agil-node-agent",instance="offline"}'
+        values: '0+0x4'
+      - series: 'agil_node_readiness_state{job="agil-node-agent",instance="heartbeat",reason="heartbeat_failing"}'
+        values: '1 1 stale _ _'
+      - series: 'agil_node_readiness_state{job="agil-node-agent",instance="heartbeat",reason="heartbeat_stale"}'
+        values: '_ _ 1 1 1'
+      - series: 'agil_node_media_ready{job="agil-node-agent",instance="media",process="livekit",kind="sfu"}'
+        values: '0+0x4'
+      - series: 'agil_node_draining{job="agil-node-agent",instance="media"}'
+        values: '0+0x4'
+      - series: 'agil_node_media_ready{job="agil-node-agent",instance="maintenance",process="livekit",kind="sfu"}'
+        values: '0+0x4'
+      - series: 'agil_node_draining{job="agil-node-agent",instance="maintenance"}'
+        values: '1+0x4'
+    alert_rule_test:
+      - eval_time: 1m30s
+        alertname: AgilNodeAgentUnreachable
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: AgilNodeAgentUnreachable
+        exp_alerts:
+          - exp_labels:
+              job: agil-node-agent
+              instance: offline
+              severity: critical
+              runbook: docs/node-image.md#monitor-the-node
+            exp_annotations:
+              summary: "Prometheus cannot scrape the AGIL node agent"
+              description: "Check the agent process, private network and scrape target."
+      - eval_time: 2m
+        alertname: AgilNodeHeartbeatUnhealthy
+        exp_alerts:
+          - exp_labels:
+              job: agil-node-agent
+              instance: heartbeat
+              severity: warning
+              runbook: docs/node-image.md#monitor-the-node
+            exp_annotations:
+              summary: "AGIL node is not reporting to Core"
+              description: "The agent responds to scrapes. Inspect agil_node_readiness_state or /readyz for the reason."
+      - eval_time: 2m
+        alertname: AgilNodeMediaUnready
+        exp_alerts:
+          - exp_labels:
+              job: agil-node-agent
+              instance: media
+              process: livekit
+              kind: sfu
+              severity: critical
+              runbook: docs/node-image.md#monitor-the-node
+            exp_annotations:
+              summary: "AGIL node media service is unready"
+              description: "livekit did not pass its readiness probe."
