@@ -25,6 +25,6 @@
     "test": "node --import tsx --import ./test/register-loader.mjs --test test/errors.test.ts test/whiteboard.test.ts test/custom-ui.test.ts test/noise-detection.test.ts test/liveness.test.ts test/large-room.test.ts test/gallery-budget.test.ts test/gallery-frame-cache.test.ts test/sfu-policy.test.ts test/resume-state.test.ts test/recording.test.ts test/controls-density.test.ts test/embedded-chrome.test.ts test/embedded-layout.test.ts test/slot-layout.test.ts test/connection-status.test.ts test/participant-integrity.test.ts test/media-badge.test.ts test/audio-output.test.ts"
   },
   "dependencies": {
-    "livekit-client": "2.24.0"
+    "livekit-client": "2.25.0"
   }
 }
