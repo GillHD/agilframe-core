@@ -7,12 +7,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
+import { pathToFileURL } from 'node:url';
 import puppeteer from 'puppeteer-core';
 import { signLiveKitToken } from '../../core/apps/server/src/sfu.ts';
 import { startTestServer } from '../../core/apps/server/test/helpers.ts';
-import { runRtmpPublisher } from '../agent/rtmp-publisher.mjs';
 
 assert.equal(process.platform, 'linux');
+assert.ok(process.env.AGILFRAME_EDGE_ENTRY, 'Set AGILFRAME_EDGE_ENTRY to the Edge repository publisher path');
+const { runRtmpPublisher } = await import(pathToFileURL(path.resolve(process.env.AGILFRAME_EDGE_ENTRY)).href);
 const exec = promisify(execFile);
 const dockerEnv = { ...process.env };
 delete dockerEnv.DOCKER_HOST;
@@ -102,6 +104,24 @@ try {
     if (window.edgeTestCall.getState().phase !== 'joined') await window.edgeTestCall.join();
   }, { roomId, token: viewer.body.token });
   await page.waitForFunction(() => window.edgeTestCall.getState().settings.sfuStatus === 'connected', { timeout: 30000 });
+
+  if (process.env.AGILFRAME_NODE_ENTRY) {
+    const nodeId = prefix + '-node';
+    const enrollment = await core.api('POST', '/v1/admin/cluster/tokens', {
+      headers, body: { kind: 'node', role: 'stun', features: ['stun'] },
+    });
+    assert.equal(enrollment.status, 201);
+    await exec(process.execPath, [process.env.AGILFRAME_NODE_ENTRY], {
+      timeout: 15_000,
+      env: { ...process.env, AGIL_CORE_URL: core.base, AGIL_NODE_TOKEN: enrollment.body.token,
+        AGIL_NODE_ID: nodeId, AGIL_NODE_ROLE: 'stun', AGIL_NODE_FEATURES: 'stun',
+        AGIL_NODE_ONCE: 'true', AGIL_NODE_MODULES: 'off', AGIL_NODE_STATE_DIR: path.join(root, 'node') },
+    });
+    const { status, body } = await core.api('GET', '/v1/admin/nodes', { headers });
+    assert.equal(status, 200);
+    assert.equal(body.nodes.find((node) => node.id === nodeId)?.status, 'online');
+    console.log('PASS standalone Node Agent registered and sent a heartbeat');
+  }
 
   let ready;
   let flowId;

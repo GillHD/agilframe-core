@@ -65,7 +65,7 @@ Core назначает медианоды и ведёт их состояние
 | Образ медианоды и Compose | [`agil/core/nodes/all-in-one/`](agil/core/nodes/all-in-one/) |
 | Воркер распознавания речи | [`agil/core/nodes/stt/`](agil/core/nodes/stt/) |
 | Node Agent и метрики | [`agil/infra/node-agent/`](agil/infra/node-agent/) |
-| Edge-агент для медиапотоков | [`agil/edge/agent/`](agil/edge/agent/) |
+| Edge-агент для встраиваемых систем | [AgilFrame Edge](https://github.com/GillHD/agilframe-edge) |
 | Helm для Core и нод | [`agil/infra/helm/`](agil/infra/helm/) |
 
 [Установка ноды](agil/core/docs/node-image.md) · [Несколько SFU-нод](agil/core/docs/sfu-multinode.md)
